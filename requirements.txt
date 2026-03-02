@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pandas
+openpyxl
+chromadb
+sentence-transformers
+pydantic
+pydantic-settings
+python-dotenv
