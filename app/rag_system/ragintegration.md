@@ -498,7 +498,7 @@ async function verifyScan(nafdacNo, scannedCategory) {
 
   // Map to your UI state
   return {
-    isVerified   : data.verified,
+    isVerified   : data.verified,ited
     score        : data.verification_score,
     severity     : data.severity,       // "NONE" | "WARNING" | "HIGH" | "CRITICAL"
     headline     : data.summary,        // one-liner for the scan result card
@@ -696,9 +696,6 @@ elif data["verified"] is True:
 
 ## Environment & Configuration
 
-The A3 team controls these. If you need a different port or the staging URL,
-ask the A3 lead or check with D7 DevOps:
-
 | Setting | Default | Description |
 |---------|---------|-------------|
 | API host | `0.0.0.0` | Bind address |
@@ -706,8 +703,6 @@ ask the A3 lead or check with D7 DevOps:
 | Similarity threshold | `0.68` | Minimum cosine similarity for `/search` results |
 | Embedding model | `all-MiniLM-L6-v2` | 384-dim sentence transformer |
 
-> **For your integration:** the only thing you need is the base URL.
-> Everything else is internal to A3.
 
 ---
 

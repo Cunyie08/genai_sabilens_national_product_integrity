@@ -41,8 +41,8 @@ product type, then runs a four-layer verification check:
 |-------|-------|-----------|
 | 1 | NAFDAC number exists in the database | `0.0` — NOT FOUND |
 | 2 | Registration has not expired | `0.1` — EXPIRED |
-| 3 | Scanned product type matches registered category | `0.2` — MISMATCH ⚠️ |
-| 4 | All checks pass | `1.0` — VERIFIED ✅ |
+| 3 | Scanned product type matches registered category | `0.2` — MISMATCH |
+| 4 | All checks pass | `1.0` — VERIFIED |
 
 A **category mismatch** (Layer 3) is the strongest counterfeit signal — it means
 a valid NAFDAC number has been stamped on a completely different type of product.
@@ -188,26 +188,26 @@ python main.py --mode ingest
 [Step 1/5] Loading NAFDAC database Excel file…
 [Loader] Reading: ./data/raw/nafdac_database.xlsx
 [Loader] Read 15 rows across 9 columns.
-[Loader] ✅  Built 15 entries.
+[Loader] Built 15 entries.
 [Loader] Subcategories: {'Cereals and Cereal Products': 4, 'Cosmetics': 5, ...}
 
 [Step 2/5] Building product chunks…
-[ChunkBuilder] ✅  Built 15 unique chunks (skipped 0 duplicate(s)).
+[ChunkBuilder]Built 15 unique chunks (skipped 0 duplicate(s)).
 
 [Step 3/5] Saving audit JSON…
-[ChunkBuilder] 💾  Saved 15 chunks to ./data/processed/nafdac_chunks.json
+[ChunkBuilder] Saved 15 chunks to ./data/processed/nafdac_chunks.json
 
 [Step 4/5] Generating embedding vectors…
 [Embedder] Loading model: sentence-transformers/all-MiniLM-L6-v2
-[Embedder] ✅  Model ready — embedding dimension: 384
+[Embedder] Model ready — embedding dimension: 384
 Batches: 100%|████████████████| 1/1 [00:02<00:00]
 
 [Step 5/5] Upserting into ChromaDB…
-[ChromaStore] ✅  Collection 'nafdac_food_products' ready.
-[ChromaStore] ✅  Upsert complete. Collection now contains 15 document(s).
+[ChromaStore] Collection 'nafdac_food_products' ready.
+[ChromaStore] Upsert complete. Collection now contains 15 document(s).
 
 ======================================================================
-  ✅  INGESTION COMPLETE
+  INGESTION COMPLETE
   Products loaded   : 15
   Chunks built      : 15
   Duplicates skipped: 0
@@ -215,15 +215,6 @@ Batches: 100%|████████████████| 1/1 [00:02<00:00
   Warnings          : 0
 ======================================================================
 ```
-
-> **First run note:** The first time you ingest, the model (~80 MB) is
-> downloaded automatically from HuggingFace. This requires an internet
-> connection and may take 1–2 minutes. Subsequent runs are instant.
-
-> **Re-ingestion is safe.** If you run `--mode ingest` again after updating
-> the Excel file, it uses upsert — existing records are updated, new ones
-> are added, nothing is duplicated.
-
 ---
 
 ### Step 2 — Start the API Server
@@ -472,13 +463,13 @@ pytest tests/test_chroma_client.py -v
 ### Expected result:
 
 ```
-tests/test_nafdac_normalizer.py     ✅  28 passed
-tests/test_excel_loader.py          ✅  30 passed
-tests/test_chunk_builder.py         ✅  25 passed
-tests/test_subcategory_alignment.py ✅  30 passed
-tests/test_regulatory_scorer.py     ✅  20 passed
-tests/test_embedder.py              ✅  14 passed
-tests/test_chroma_client.py         ✅  20 passed
+tests/test_nafdac_normalizer.py      28 passed
+tests/test_excel_loader.py           30 passed
+tests/test_chunk_builder.py          25 passed
+tests/test_subcategory_alignment.py  30 passed
+tests/test_regulatory_scorer.py      20 passed
+tests/test_embedder.py               14 passed
+tests/test_chroma_client.py          20 passed
 ```
 
 > `test_embedder.py` and `test_chroma_client.py` are automatically skipped
@@ -528,7 +519,7 @@ REFERENCE_DATE=2026-03-03
 
 These are the key scenarios to demonstrate during a product demo:
 
-### Scenario 1 — Authentic Product ✅
+### Scenario 1 — Authentic Product 
 A Kellogg's Corn Flakes box with a correct, valid NAFDAC label.
 ```bash
 curl -X POST http://localhost:8000/verify/product \
@@ -537,7 +528,7 @@ curl -X POST http://localhost:8000/verify/product \
 # Expected: score=1.0, VERIFIED
 ```
 
-### Scenario 2 — Counterfeit (Category Mismatch) ⚠️
+### Scenario 2 — Counterfeit (Category Mismatch) 
 A fake cosmetic product reusing Kellogg's NAFDAC number.
 ```bash
 curl -X POST http://localhost:8000/verify/product \
@@ -546,7 +537,7 @@ curl -X POST http://localhost:8000/verify/product \
 # Expected: score=0.2, SUBCATEGORY_MISMATCH, severity=CRITICAL
 ```
 
-### Scenario 3 — Fake NAFDAC Number ❌
+### Scenario 3 — Fake NAFDAC Number 
 A product with a completely made-up NAFDAC number.
 ```bash
 curl -X POST http://localhost:8000/verify/product \
@@ -555,7 +546,7 @@ curl -X POST http://localhost:8000/verify/product \
 # Expected: score=0.0, NOT_FOUND, severity=CRITICAL
 ```
 
-### Scenario 4 — Near-Expiry Warning 🕐
+### Scenario 4 — Near-Expiry Warning 
 Lipton Yellow Label Tea (expires 2026-03-28, just 25 days away).
 ```bash
 curl -X POST http://localhost:8000/verify/product \
@@ -575,26 +566,3 @@ curl -X POST http://localhost:8000/verify/search \
 
 ---
 
-## Troubleshooting
-
-**`ModuleNotFoundError: No module named 'sentence_transformers'`**
-→ Run `pip install -r requirements.txt` from inside the virtual environment.
-
-**`FileNotFoundError: Database not found at ./data/raw/nafdac_database.xlsx`**
-→ Make sure `nafdac_database.xlsx` is inside `data/raw/`. The file must be there
-before running `--mode ingest`.
-
-**`chromadb.errors.InvalidCollectionException`**
-→ Delete the `chroma_db/` directory and re-run `python main.py --mode ingest`.
-
-**The server starts but returns 503 on `/verify/health`**
-→ The database was not ingested yet. Run `python main.py --mode ingest` first,
-then start the server.
-
-**First ingestion is slow**
-→ Normal. The `all-MiniLM-L6-v2` model (~80 MB) is downloaded on first run.
-Subsequent runs load from the local cache and take seconds.
-
-**`Connection refused` when calling the API**
-→ Make sure `python main.py --mode serve` is running in a separate terminal.
-Check that no firewall is blocking port 8000.
