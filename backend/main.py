@@ -1,36 +1,33 @@
-"""Main FastAPI application entry point"""
+"""FastAPI application entrypoint."""
+
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-<<<<<<< HEAD:backend/main.py
+
 from backend.config import settings
-from backend.routers import auth, company, websocket
-=======
-from app.config import settings
-from app.routers import auth, consumer, company, nafdac, shared
->>>>>>> 41884c67c1c2c849442e7993d5bb3d988cf6c38d:app/main.py
+from backend.routers.nafdac import router as nafdac_router
+from backend.routers.shared import router as shared_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager"""
-    # Startup
-    print("🚀 SabiLens Backend Starting...")
+    """Lifespan context manager."""
+    print("SabiLens Backend Starting...")
     yield
-    # Shutdown
-    print("🛑 SabiLens Backend Shutdown...")
+    print("SabiLens Backend Shutdown...")
 
 
 app = FastAPI(
-    title=settings.APP_NAME,
+    title="Sabilens National Product Integrity API",
     version=settings.APP_VERSION,
+    description="API for NAFDAC workflows, product verification, and location services.",
     lifespan=lifespan,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Change in production
@@ -40,27 +37,18 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
-app.include_router(company.router, prefix="/api/v1/company", tags=["company"])
-app.include_router(websocket.router, tags=["websocket"])
+app.include_router(nafdac_router)
+app.include_router(shared_router)
 
 
-# Root endpoint
-@app.get("/")
+@app.get("/", tags=["Health"])
 async def root():
-    return {"message": "SabiLens Backend API", "version": settings.APP_VERSION}
+    return {"service": "sabilens-api", "status": "ok", "version": settings.APP_VERSION}
 
 
-@app.get("/health")
-async def health_check():
+@app.get("/health", tags=["Health"])
+async def health():
     return {"status": "healthy"}
-
-#Include routers (uncomment when routers are created)
-app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
-app.include_router(consumer.router, prefix="/api/consumer", tags=["Consumer"])
-app.include_router(company.router, prefix="/api/company", tags=["Company"])
-app.include_router(nafdac.router, prefix="/api/nafdac", tags=["NAFDAC"])
-app.include_router(shared.router, prefix="/api/verify", tags=["Verification"])
 
 
 if __name__ == "__main__":

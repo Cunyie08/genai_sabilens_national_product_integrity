@@ -1,109 +1,70 @@
-"""Product models"""
-from datetime import datetime, date
-from uuid import uuid4
-from sqlalchemy import Column, String, DateTime, TEXT, Date, Index, Enum as SQLEnum, Numeric, Boolean, LargeBinary
-from sqlalchemy.orm import declarative_base
-from sqlalchemy.sql import func
-import enum
-
-Base = declarative_base()
-
-
-class ProductStatus(str, enum.Enum):
-    ACTIVE = "active"
-    PENDING = "pending"
-    EXPIRED = "expired"
-    DISCONTINUED = "discontinued"
-
-
-class BarcodeType(str, enum.Enum):
-    UPC = "UPC"
-    EAN = "EAN"
-    QR = "QR"
-    CODE128 = "CODE128"
-    OTHER = "OTHER"
-
-
-class EmbeddingType(str, enum.Enum):
-    VISUAL = "visual"
-    OCR = "ocr"
-    REGULATORY = "regulatory"
-    FUSION = "fusion"
-    MULTI_MODAL = "multi_modal"
+"""Product models — owned by Mr Openx."""
+import uuid
+from sqlalchemy import Column, String, Boolean, DateTime, Text, Date, ForeignKey, Numeric, LargeBinary, func
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from backend.database import Base
 
 
 class ProductCategory(Base):
-    """Product categories table"""
+    """Product categories table."""
     __tablename__ = "product_categories"
-    
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(100), nullable=False)
-    description = Column(TEXT)
-    parent_id = Column(String(36))  # Self-referencing FK
+    description = Column(Text, nullable=True)
+    parent_id = Column(UUID(as_uuid=True), ForeignKey("product_categories.id"), nullable=True)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=func.now())
+    created_at = Column(DateTime, server_default=func.now())
 
 
 class Product(Base):
-    """Products table"""
+    """Products table."""
     __tablename__ = "products"
-    
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    company_id = Column(String(36), nullable=False)  # FK to companies
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=True)
+    category_id = Column(UUID(as_uuid=True), ForeignKey("product_categories.id"), nullable=True)
     name = Column(String(255), nullable=False)
-    description = Column(TEXT)
-    category_id = Column(String(36))  # FK to product_categories
-    nafdac_number = Column(String(100), unique=True, nullable=False)
-    batch_number = Column(String(100))
-    manufacturer_name = Column(String(255))
-    manufacturing_date = Column(Date)
-    expiry_date = Column(Date)
-    ingredients = Column(TEXT)
-    warnings = Column(TEXT)
-    image_urls = Column(String)  # Array
-    master_artwork_url = Column(TEXT)
-    status = Column(SQLEnum(ProductStatus), default=ProductStatus.ACTIVE)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-    created_by = Column(String(36))  # FK to users
-    
-    __table_args__ = (
-        Index("idx_products_company", "company_id"),
-        Index("idx_products_nafdac", "nafdac_number"),
-        Index("idx_products_status", "status"),
-    )
+    description = Column(Text, nullable=True)
+    nafdac_number = Column(String(100), unique=True, nullable=True)
+    batch_number = Column(String(100), nullable=True)
+    manufacturer_name = Column(String(255), nullable=True)
+    manufacturing_date = Column(Date, nullable=True)
+    expiry_date = Column(Date, nullable=True)
+    ingredients = Column(Text, nullable=True)
+    warnings = Column(Text, nullable=True)
+    image_urls = Column(JSONB, nullable=True)
+    master_artwork_url = Column(Text, nullable=True)
+    status = Column(String(50), default="active")
+    # status IN ('active', 'pending', 'expired', 'discontinued')
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
 
 
 class ProductBarcode(Base):
-    """Product barcodes table"""
+    """Product barcodes table."""
     __tablename__ = "product_barcodes"
-    
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    product_id = Column(String(36), nullable=False)  # FK to products
-    barcode_type = Column(SQLEnum(BarcodeType))
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    barcode_type = Column(String(50), nullable=True)
+    # barcode_type IN ('UPC', 'EAN', 'QR', 'CODE128', 'OTHER')
     barcode_value = Column(String(255), nullable=False)
     is_primary = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=func.now())
-    
-    __table_args__ = (
-        Index("idx_product_barcodes_value", "barcode_value"),
-    )
+    created_at = Column(DateTime, server_default=func.now())
 
 
 class ProductEmbedding(Base):
-    """Product embeddings table (AI fingerprints)"""
+    """Product embeddings table (AI fingerprints)."""
     __tablename__ = "product_embeddings"
-    
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    product_id = Column(String(36), nullable=False)  # FK to products
-    embedding_type = Column(SQLEnum(EmbeddingType), nullable=False)
-    embedding_vector = Column(LargeBinary)
-    model_version = Column(String(50))
-    confidence_score = Column(Numeric(5, 2))
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-    
-    __table_args__ = (
-        Index("idx_product_embeddings_product", "product_id"),
-        Index("idx_product_embeddings_type", "embedding_type"),
-    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    embedding_type = Column(String(50), nullable=False)
+    # embedding_type IN ('visual', 'ocr', 'regulatory', 'fusion', 'multi_modal')
+    embedding_vector = Column(LargeBinary, nullable=True)
+    model_version = Column(String(50), nullable=True)
+    confidence_score = Column(Numeric(5, 2), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

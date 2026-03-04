@@ -1,49 +1,58 @@
-"""Response utilities"""
-from datetime import datetime
-from typing import Any, Dict, Optional, List
+"""Response utilities."""
+from typing import Any, Optional, List
+from fastapi.responses import JSONResponse
 
 
-def success_response(data: Any, message: str = "Success", status_code: int = 200) -> Dict:
-    """Standard success response"""
-    return {
-        "success": True,
-        "data": data,
-        "message": message,
-        "timestamp": datetime.utcnow().isoformat(),
-    }
+def success_response(data: Any = None, message: str = "Success", status_code: int = 200) -> JSONResponse:
+    """Standard success response."""
+    return JSONResponse(
+        status_code=status_code,
+        content={"success": True, "data": data, "message": message},
+    )
 
 
-def error_response(code: str, message: str, details: Optional[Dict] = None, status_code: int = 400) -> Dict:
-    """Standard error response"""
-    return {
-        "success": False,
-        "error": {
-            "code": code,
+def error_response(
+    message: str,
+    code: str = "ERROR",
+    status_code: int = 400,
+    details: Optional[dict] = None,
+) -> JSONResponse:
+    """Standard error response."""
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "success": False,
+            "data": None,
             "message": message,
+            "code": code,
             "details": details or {},
         },
-        "timestamp": datetime.utcnow().isoformat(),
-    }
+    )
 
 
 def paginated_response(
-    data: List,
-    page: int = 1,
-    limit: int = 20,
-    total: int = 0,
+    data: Any,
+    page: int,
+    limit: int,
+    total: int,
     message: str = "Success",
-) -> Dict:
-    """Paginated response"""
-    pages = (total + limit - 1) // limit if limit > 0 else 1
-    return {
-        "success": True,
-        "data": data,
-        "pagination": {
-            "page": page,
-            "limit": limit,
-            "total": total,
-            "pages": pages,
+    status_code: int = 200,
+) -> JSONResponse:
+    """Paginated response."""
+    total_pages = (total + limit - 1) // limit if limit > 0 else 0
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "success": True,
+            "data": data,
+            "message": message,
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": total,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_prev": page > 1,
+            },
         },
-        "message": message,
-        "timestamp": datetime.utcnow().isoformat(),
-    }
+    )

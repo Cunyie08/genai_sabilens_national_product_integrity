@@ -1,11 +1,15 @@
-"""Dependencies and guards"""
+"""
+Dependencies and guards — owned by tunjipaul.
+"""
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError, jwt
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import UUID
 
-from backend.core.security import decode_token
+from backend.config import settings
 from backend.database import get_db
-from backend.models.user import User, UserRole, UserStatus
 
 bearer_scheme = HTTPBearer(
     auto_error=False,
@@ -17,8 +21,10 @@ bearer_scheme = HTTPBearer(
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
-) -> User:
-    """Get currently authenticated user from bearer token."""
+):
+    """Decode JWT and return current user object."""
+    from backend.models.user import User
+
     if not credentials or credentials.scheme.lower() != "bearer":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -26,28 +32,20 @@ async def get_current_user(
         )
 
     token = credentials.credentials
-    payload = decode_token(token)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-        )
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-        )
+    result = await db.execute(select(User).where(User.id == UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if not user or user.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
 
-    user = await db.get(User, user_id)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-        )
-
-    if user.status in {UserStatus.SUSPENDED, UserStatus.DELETED}:
+    if user.status in {"suspended", "deleted"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is not active",
@@ -56,15 +54,14 @@ async def get_current_user(
     return user
 
 
-def require_role(*roles: UserRole):
-    """Dependency to check user role."""
-
-    async def check_role(current_user: User = Depends(get_current_user)) -> User:
+def require_role(*roles: str):
+    """Dependency factory that enforces role-based access control."""
+    async def role_checker(current_user=Depends(get_current_user)):
         if current_user.role not in roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not enough permissions",
+                detail=f"Access denied. Required roles: {', '.join(roles)}",
             )
         return current_user
 
-    return check_role
+    return role_checker

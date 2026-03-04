@@ -1,97 +1,67 @@
-"""Alert and notification models"""
-from datetime import datetime
-from uuid import uuid4
-from sqlalchemy import Column, String, DateTime, Boolean, TEXT, Index, Enum as SQLEnum
-from sqlalchemy.orm import declarative_base
-from sqlalchemy.sql import func
-import enum
-
-Base = declarative_base()
-
-
-class AlertType(str, enum.Enum):
-    COUNTERFEIT = "counterfeit"
-    SUSPICIOUS = "suspicious"
-    BULK = "bulk"
-    RECURRING = "recurring"
-
-
-class Severity(str, enum.Enum):
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-
-
-class NotificationType(str, enum.Enum):
-    SCAN_RESULT = "scan_result"
-    REPORT_UPDATE = "report_update"
-    ALERT = "alert"
-    SYSTEM = "system"
-    ACHIEVEMENT = "achievement"
-
-
-class NotificationChannel(str, enum.Enum):
-    PUSH = "push"
-    EMAIL = "email"
-    SMS = "sms"
-    IN_APP = "in_app"
+"""Alert and notification models."""
+import uuid
+from sqlalchemy import Column, String, Text, Boolean, DateTime, ForeignKey, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import relationship
+from backend.database import Base
 
 
 class Alert(Base):
-    """Alerts table (for companies and NAFDAC)"""
+    """Alerts table (for companies and NAFDAC)."""
     __tablename__ = "alerts"
-    
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    report_id = Column(String(36))  # FK to reports
-    company_id = Column(String(36))  # FK to companies
-    alert_type = Column(SQLEnum(AlertType))
-    severity = Column(SQLEnum(Severity))
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    report_id = Column(UUID(as_uuid=True), ForeignKey("reports.id", ondelete="SET NULL"), nullable=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=True)
+    alert_type = Column(String(50), nullable=True)
+    # CHECK constraint: alert_type IN ('counterfeit', 'suspicious', 'bulk', 'recurring')
+    severity = Column(String(50), nullable=True)
+    # CHECK constraint: severity IN ('critical', 'high', 'medium', 'low')
     title = Column(String(255), nullable=False)
-    message = Column(TEXT, nullable=False)
-    alert_data = Column(String)  # JSONB - renamed from metadata
+    message = Column(Text, nullable=False)
+    metadata_ = Column("metadata", JSONB, nullable=True)  # 'metadata' is reserved in SQLAlchemy
     is_read = Column(Boolean, default=False)
     is_acknowledged = Column(Boolean, default=False)
-    acknowledged_by = Column(String(36))  # FK to users
-    acknowledged_at = Column(DateTime)
-    created_at = Column(DateTime, default=func.now())
-    
-    __table_args__ = (
-        Index("idx_alerts_company", "company_id"),
-        Index("idx_alerts_type", "alert_type"),
-        Index("idx_alerts_severity", "severity"),
-        Index("idx_alerts_created", "created_at"),
-    )
+    acknowledged_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    # Indexes (defined in Alembic migration, not ORM):
+    # idx_alerts_company on company_id
+    # idx_alerts_type on alert_type
+    # idx_alerts_severity on severity
+    # idx_alerts_created on created_at
 
 
 class Notification(Base):
-    """Notifications table (for users)"""
+    """Notifications table (for users)."""
     __tablename__ = "notifications"
-    
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    user_id = Column(String(36), nullable=False)  # FK to users
-    notification_type = Column(SQLEnum(NotificationType))
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    notification_type = Column(String(50), nullable=True)
+    # CHECK: notification_type IN ('scan_result', 'report_update', 'alert', 'system', 'achievement')
     title = Column(String(255), nullable=False)
-    message = Column(TEXT, nullable=False)
-    data = Column(String)  # JSONB
+    message = Column(Text, nullable=False)
+    data = Column(JSONB, nullable=True)
     is_read = Column(Boolean, default=False)
-    read_at = Column(DateTime)
-    created_at = Column(DateTime, default=func.now())
-    
-    __table_args__ = (
-        Index("idx_notifications_user", "user_id"),
-        Index("idx_notifications_read", "is_read"),
-    )
+    read_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
 
 
 class NotificationPreference(Base):
-    """User notification preferences"""
+    """User notification preferences."""
     __tablename__ = "notification_preferences"
-    
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    user_id = Column(String(36), nullable=False, unique=True)  # FK to users
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     notification_type = Column(String(50), nullable=False)
-    channel = Column(SQLEnum(NotificationChannel))
+    channel = Column(String(50), nullable=True)
+    # CHECK: channel IN ('push', 'email', 'sms', 'in_app')
     enabled = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'notification_type', 'channel', name='uq_notification_prefs'),
+    )
