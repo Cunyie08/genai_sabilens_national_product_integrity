@@ -1,0 +1,54 @@
+# Core FastAPI & Web Framework
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Database & ORM
+sqlalchemy[asyncio]
+asyncpg
+alembic
+geoalchemy2
+
+# Authentication & Security
+python-jose[cryptography]
+bcrypt
+passlib[bcrypt]
+pydantic-settings
+
+# Async & Task Queue
+celery
+redis
+kombu
+
+# File Upload & Storage
+cloudinary
+boto3
+
+# Data Validation & Serialization
+pydantic
+pydantic[email]
+
+# Environment & Configuration
+python-dotenv
+pytz
+
+# HTTP & Requests
+requests
+httpx
+
+# Logging & Monitoring
+structlog
+python-json-logger
+
+# Testing
+pytest
+pytest-asyncio
+pytest-cov
+
+# Utilities
+python-slugify
+
+# Code Quality & Development
+black
+flake8
+isort
