@@ -1,0 +1,221 @@
+Complete API Endpoints for SabiLens
+
+1. Authentication Endpoints
+Public Auth
+POST /api/auth/register		- Register new user (consumer/company/nafdac) POST /api/auth/login	- Login with email/phone & password
+POST /api/auth/logout	- Logout user
+POST /api/auth/refresh-token	- Refresh access token POST /api/auth/forgot-password		- Request password reset
+POST /api/auth/reset-password		- Reset password with token POST /api/auth/verify-email	- Verify email address
+POST /api/auth/verify-phone		- Verify phone with OTP POST /api/auth/resend-otp	- Resend verification OTP
+
+
+
+2. Consumer Endpoints
+Profile Management
+GET /api/consumer/profile	- Get consumer profile PUT /api/consumer/profile	 - Update consumer profile
+PATCH /api/consumer/profile/avatar	- Upload/update profile picture DELETE /api/consumer/profile	- Delete consumer account
+GET  /api/consumer/stats	- Get consumer stats (reports, scans)
+
+
+Scan History
+GET  /api/consumer/scans	- Get all scan history (paginated)
+GET /api/consumer/scans/recent	- Get recent scans (for home page) GET /api/consumer/scans/:scanId	 - Get specific scan details
+DELETE /api/consumer/scans/clear			- Clear all scan history DELETE /api/consumer/scans/:scanId		- Delete specific scan GET /api/consumer/scans/filter	- Filter scans (by status/date) GET /api/consumer/scans/stats		- Get scan statistics
+
+Product Scanning
+POST /api/consumer/scan	- Submit new product scan POST /api/consumer/scan/upload		- Upload product images
+POST /api/consumer/scan/analyze	- AI analysis of scanned product GET /api/consumer/scan/result/:scanId - Get scan result
+POST /api/consumer/scan/confirm	- Confirm scan result accuracy
+
+
+
+Reporting
+POST /api/consumer/reports	- Submit counterfeit report POST /api/consumer/reports/upload		 - Upload receipt/evidence GET /api/consumer/reports/:reportId	- Get report status
+PUT /api/consumer/reports/:reportId	- Update report DELETE /api/consumer/reports/:reportId		- Withdraw report
+GET  /api/consumer/reports/history	- Get user's report history
+
+
+
+Notifications
+GET  /api/consumer/notifications	- Get all notifications
+PATCH /api/consumer/notifications/read		- Mark notifications as read DELETE /api/consumer/notifications/:id	- Delete notification
+GET /api/consumer/notifications/settings - Get notification preferences PUT /api/consumer/notifications/settings - Update notification preferences
+
+
+
+Settings & Preferences
+GET  /api/consumer/settings	- Get all settings
+PUT /api/consumer/settings/language			- Update preferred language PUT /api/consumer/settings/location		 - Update location preferences PUT /api/consumer/settings/privacy		- Update privacy settings GET /api/consumer/settings/data	- Request data export
+DELETE /api/consumer/settings/data	- Delete user data
+
+3. Company Endpoints
+Authentication & Registration
+POST /api/company/register		- Register new company POST /api/company/login	- Company login
+POST /api/company/verify		- Verify company (NAFDAC only) GET /api/company/status	- Get registration status
+POST /api/company/resend-verification	- Resend verification email
+
+
+Company Profile
+GET /api/company/profile	- Get company profile PUT /api/company/profile	 - Update company details
+PATCH /api/company/profile/logo		- Upload company logo GET /api/company/team	- Get team members
+POST /api/company/team	- Invite team member
+PUT /api/company/team/:userId		- Update team member role DELETE /api/company/team/:userId			- Remove team member GET /api/company/billing	- Get billing info
+PUT  /api/company/billing	- Update billing info
+GET /api/company/subscription	- Get subscription details PUT /api/company/subscription	 - Update subscription
+
+
+
+Dashboard & Analytics
+
+GET/api/company/dashboard- Get dashboard overviewGET/api/company/dashboard/kpi- Get KPI cards dataGET/api/company/dashboard/trends- Get trend chart dataGET/api/company/dashboard/states- Get top states chart dataGET /api/company/dashboard/recent-alerts		- Get recent alerts GET /api/company/dashboard/quick-stats	- Get quick statistics
+
+Product Registry
+GET /api/company/products	- Get all registered products GET /api/company/products/:productId		- Get specific product POST /api/company/products		- Register new product PUT /api/company/products/:productId		 - Update product DELETE /api/company/products/:productId		- Delete product
+POST /api/company/products/upload		- Upload product artwork GET /api/company/products/categories			- Get product categories GET /api/company/products/stats	- Get product statistics
+
+Reports & Alerts
+GET /api/company/reports	- Get all reports (paginated) GET /api/company/reports/:reportId			- Get specific report GET /api/company/reports/filter		- Filter reports
+GET  /api/company/reports/stats	- Get report statistics
+PATCH /api/company/reports/:reportId/status - Update report status POST /api/company/reports/export		- Export reports (CSV/PDF) GET /api/company/alerts	- Get all alerts
+PATCH /api/company/alerts/:alertId/read - Mark alert as read PATCH /api/company/alerts/read-all	- Mark all alerts as read
+
+Evidence Vault
+GET /api/company/evidence	- Get all evidence cases GET /api/company/evidence/:caseId		- Get specific case GET /api/company/evidence/:caseId/files		- Get case files
+POST /api/company/evidence/:caseId/download	- Download case files POST /api/company/evidence/:caseId/zip	- Create ZIP bundle
+GET  /api/company/evidence/stats	- Get evidence statistics
+
+Heat Map
+GET /api/company/heatmap	- Get heat map data GET /api/company/heatmap/regions		- Get region data
+GET /api/company/heatmap/coordinates		- Get GPS coordinates GET /api/company/heatmap/filter	- Filter heat map
+GET  /api/company/heatmap/export	- Export map data
+
+
+Settings
+GET  /api/company/settings	- Get all settings
+PUT /api/company/settings/notifications			- Update notification prefs PUT /api/company/settings/security		- Update security settings PUT /api/company/settings/api	- Update API settings
+GET  /api/company/settings/api-keys	- Get API keys
+POST /api/company/settings/api-keys	- Generate new API key DELETE /api/company/settings/api-keys/:keyId			- Revoke API key PUT /api/company/settings/webhooks		- Update webhook URLs POST /api/company/settings/test-webhook			- Test webhook
+DELETE /api/company/settings/account	- Delete company account
+
+
+
+
+
+4. NAFDAC Endpoints
+Authentication & User Management
+POST /api/nafdac/login	- NAFDAC officer login
+POST /api/nafdac/officers	 - Create new officer (admin only) GET /api/nafdac/officers	- Get all officers
+PUT /api/nafdac/officers/:officerId		- Update officer DELETE /api/nafdac/officers/:officerId			- Delete officer GET /api/nafdac/permissions	- Get role permissions
+PUT  /api/nafdac/permissions/:role	- Update permissions
+
+Company Management
+GET /api/nafdac/companies	- Get all registered companies GET /api/nafdac/companies/pending			- Get pending verifications GET /api/nafdac/companies/:companyId				- Get company details POST /api/nafdac/companies/:companyId/verify			 - Verify company POST /api/nafdac/companies/:companyId/reject			- Reject company PUT /api/nafdac/companies/:companyId/suspend				- Suspend company PUT /api/nafdac/companies/:companyId/activate			- Activate company DELETE /api/nafdac/companies/:companyId				- Delete company GET /api/nafdac/companies/stats		- Get company statistics
+
+
+
+National Dashboard
+
+GET/api/nafdac/dashboard- Get national dashboardGET/api/nafdac/dashboard/stats- Get main statsGET/api/nafdac/dashboard/heatmap- Get national heat mapGET/api/nafdac/dashboard/live-alerts- Get live alert feedGET/api/nafdac/dashboard/regions- Get region breakdownGET/api/nafdac/dashboard/trends- Get national trends
+
+
+Alerts Management
+
+GET/api/nafdac/alerts- Get all alertsGET/api/nafdac/alerts/critical- Get critical alertsGET/api/nafdac/alerts/:alertId- Get specific alertPATCH /api/nafdac/alerts/:alertId/acknowledge		- Acknowledge alert PATCH /api/nafdac/alerts/:alertId/resolve	- Resolve alert
+POST /api/nafdac/alerts/bulk-acknowledge	- Acknowledge multiple alerts GET /api/nafdac/alerts/stats	- Get alert statistics
+GET  /api/nafdac/alerts/export	- Export alerts data
+
+Cases & Evidence
+GET /api/nafdac/cases	- Get all evidence cases GET /api/nafdac/cases/:caseId		- Get case details
+GET /api/nafdac/cases/:caseId/evidence		- Get case evidence POST /api/nafdac/cases/:caseId/assign	- Assign to officer
+POST /api/nafdac/cases/:caseId/update-status	- Update case status POST /api/nafdac/cases/export	- Export case bundle
+GET  /api/nafdac/cases/stats	- Get case statistics
+GET  /api/nafdac/cases/search	- Search cases
+
+
+
+Vendor Tracking
+
+GET/api/nafdac/vendors- Get all vendorsGET/api/nafdac/vendors/high-risk- Get high-risk vendorsGET/api/nafdac/vendors/recurring- Get recurring offendersGET/api/nafdac/vendors/:vendorId- Get vendor detailsPOST /api/nafdac/vendors/:vendorId/blacklist	- Blacklist vendor
+POST /api/nafdac/vendors/:vendorId/investigate	- Mark for investigation GET /api/nafdac/vendors/export	- Export vendor data
+GET  /api/nafdac/vendors/stats	- Get vendor statistics
+
+
+
+Analytics & Reports
+GET /api/nafdac/analytics/categories			- Get category analytics GET /api/nafdac/analytics/trends	- Get trend comparison GET /api/nafdac/analytics/regions		- Get region analytics GET /api/nafdac/analytics/timeline		 - Get timeline data
+POST /api/nafdac/analytics/export	- Export analytics report GET /api/nafdac/analytics/predictions		- Get AI predictions
+GET  /api/nafdac/analytics/hotspots	- Get counterfeit hotspots
+
+Export Data
+GET  /api/nafdac/export	- Get export options
+POST /api/nafdac/export/reports		- Export reports data POST /api/nafdac/export/cases	- Export cases data POST /api/nafdac/export/vendors			 - Export vendors data POST /api/nafdac/export/analytics			- Export analytics data GET /api/nafdac/export/history	 - Get export history
+GET  /api/nafdac/export/download/:exportId	- Download exported file
+
+
+Enforcement Actions
+POST /api/nafdac/enforcement/raids	- Schedule raid
+GET /api/nafdac/enforcement/raids	- Get scheduled raids PUT /api/nafdac/enforcement/raids/:raidId		- Update raid
+POST /api/nafdac/enforcement/notices		- Issue warning notice GET /api/nafdac/enforcement/history	- Get enforcement history POST /api/nafdac/enforcement/seizures			- Log product seizure
+
+Notifications & Communications
+GET  /api/nafdac/notifications	- Get notifications
+POST /api/nafdac/notifications/broadcast		- Broadcast to all companies POST /api/nafdac/notifications/company/:companyId - Send to specific company GET /api/nafdac/notifications/settings	- Get notification settings
+PUT  /api/nafdac/notifications/settings	- Update notification settings
+
+Settings & Configuration
+GET  /api/nafdac/settings	- Get system settings
+PUT /api/nafdac/settings	- Update system settings GET /api/nafdac/settings/risk-levels		- Get risk level config PUT /api/nafdac/settings/risk-levels		 - Update risk levels
+GET /api/nafdac/settings/categories	- Get product categories POST /api/nafdac/settings/categories		- Add category
+PUT /api/nafdac/settings/categories/:categoryId	- Update category DELETE /api/nafdac/settings/categories/:categoryId		- Delete category GET /api/nafdac/settings/audit-logs	- Get audit logs
+
+5. Shared/Common Endpoints
+Product Verification
+GET /api/verify/nafdac/:number			- Verify NAFDAC number GET /api/verify/batch/:number		- Verify batch number POST /api/verify/image	- Verify product by image GET /api/verify/product/:productId				- Get product details
+
+Location Services
+GET /api/location/states	- Get all Nigerian states GET /api/location/cities/:state		- Get cities by state
+POST /api/location/reverse-geocode	- Get location from GPS
+
+
+File Upload
+POST /api/upload/image	- Upload single image
+POST /api/upload/images	- Upload multiple images
+POST /api/upload/receipt	- Upload receipt
+DELETE /api/upload/:fileId	- Delete uploaded file
+
+
+Notifications (Real-time via WebSocket)
+WS	/ws/notifications	- WebSocket connection
+WS	/ws/company/:companyId		- Company-specific socket WS	/ws/nafdac	- NAFDAC-specific socket
+
+
+
+Response Formats
+Success Response
+```json
+{
+"success": true, "data": {},
+"message": "Operation successful", "timestamp": "2024-01-15T14:30:00Z"
+}
+
+Error Response
+```json
+{
+"success": false, "error": {
+"code": "ERROR_CODE",
+"message": "Error description", "details": {}
+},
+"timestamp": "2024-01-15T14:30:00Z"
+}
+```
+
+
+Paginated Response
+```json
+{
+"success": true, "data": [], "pagination": { "page": 1,
+"limit": 20,
+"total": 100,
+"pages": 5
+}
+}
