@@ -227,31 +227,46 @@ async def search_products(request: SearchRequest):
     ]
 
 
+VALID_SUBCATEGORIES = [
+    "Cereals and Cereal Products",
+    "Cereals"
+    "Cosmetics",
+    "Fats and oils, and Fat Emulsions",
+    "Salts, Spices, Soups, Sauces, Salads and Seasoning",
+    "Beverages",
+    "Sweeteners",
+]
+
 @router.get("/category/{subcategory}", response_model=list[dict])
 async def get_products_by_category(
     subcategory: str,
     n: int = Query(default=20, ge=1, le=100, description="Max results"),
 ):
-    """
-    Return all registered products in a given subcategory.
+    """ Return all registered products in a given subcategory. Valid subcategory values: 'Cereals and Cereal Products' 'Cosmetics' 'Fats and oils, and Fat Emulsions' 'Salts, Spices, Soups, Sauces, Salads and Seasoning' 'Beverages' 'Sweeteners' Called by: D5 Dashboard (category browse), A4 Fusion Engine """
+    normalized_input = subcategory.strip().lower()
 
-    Valid subcategory values:
-      'Cereals and Cereal Products'
-      'Cosmetics'
-      'Fats and oils, and Fat Emulsions'
-      'Salts, Spices, Soups, Sauces, Salads and Seasoning'
-      'Beverages'
-      'Sweeteners'
+    # Find the correctly-cased subcategory from VALID_SUBCATEGORIES
+    matched_category = next(
+        (cat for cat in VALID_SUBCATEGORIES if cat.lower() == normalized_input),
+        None
+    )
 
-    Called by: D5 Dashboard (category browse), A4 Fusion Engine
-    """
-    records = _retriever.retrieve_by_subcategory(subcategory=subcategory, n=n)
+    if not matched_category:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Invalid subcategory '{subcategory}'. "
+                   f"Valid options: {', '.join(VALID_SUBCATEGORIES)}",
+        )
+
+    # Query retriever with the correctly-cased category
+    records = _retriever.retrieve_by_subcategory(subcategory=matched_category, n=n)
 
     if not records:
         raise HTTPException(
-            status_code = 404,
-            detail      = f"No products found for subcategory '{subcategory}'.",
+            status_code=404,
+            detail=f"No products found for subcategory '{matched_category}'.",
         )
+
     return records
 
 
