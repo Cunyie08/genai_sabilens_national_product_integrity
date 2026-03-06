@@ -1,0 +1,130 @@
+SabiLens: A Multimodal AI Ecosystem for National Product Integrity
+We are creating a verified multi-angle reference dataset using authentic manufacturer- sourced products. Each product is stored as a six-view embedding profile, and we compare incoming scans against that ground-truth baseline using similarity scoring and anomaly thresholds.
+
+
+What reports the fake?
+Our multi-signal fusion engine automatically generates a structured evidence file when authenticity confidence drops below threshold, which is then logged to the regulatory dashboard and optionally escalated with user consent.
+Below is a clear end-to-end architecture breakdown + 7-Day execution table, explicitly split between:
+* AI Engineers (A1-A8) ? Models, pipelines, intelligence, geo-analytics
+* Developers (D1-D8) ? Mobile app, backend, APIs, database, dashboards, DevOps
+
+
+Day 7 Must Show
+During demo:
+1. Scan authentic worn product ? Authentic (High Confidence)
+2. Scan counterfeit with typo ? Suspicious / Fake
+3. Show purchase channel selection
+4. Dashboard shows geo cluster
+5. Voice says, "Do not buy this product."
+
+AI ENGINEERS (A1-A4)
+A1 - Visual & Damage Modelling Lead
+What You're Building: The core image similarity engine + wear & tear detection.
+Why It Matters: You are the system's "eyes." If your similarity scoring is weak, the entire authenticity decision collapses. Your damage detection prevents false positives when products are dented or scratched.
+Impact on Demo: Your work proves the system can detect subtle visual differences while tolerating real-world packaging wear.
+
+
+
+DayPrimary TaskResponsibilitiesDeliverables1Reference Dataset
+StructuringOrganize 6-angle authentic product
+images; standardize resolution; define embedding architectureCleaned reference dataset
++ embedding plan2Embedding PipelineImplement CNN embedding extraction (ResNet/EfficientNet); generate
+embeddings for all reference imagesStored product embedding library3Region-Based DetectionBuild logo/brand/NAFDAC region cropper; compute region embeddingsRegion similarity scoring API4Damage
+Detection LayerBuild dent/scratch/blur detector; define damage scoreDamage scoring module5Robustness
+ImprovementsAdd augmentation (blur, brightness, rotation); recalibrate similarity thresholdsStable visual similarity engine6Optimization & TuningReduce inference time; adjust thresholds for false positivesOptimized visual pipeline7Demo SimulationPrepare 1 authentic worn product + 1 counterfeit test caseDemo-ready visual test scenarios
+A2 - OCR & Linguistic Integrity Lead
+What You're Building: Text extraction, typo detection, spelling validation, structural text checks.
+Why It Matters: Counterfeiters often misspell brand names or alter batch formats. Even when visuals look correct, linguistic errors expose fakes.
+Impact on Demo: You enable the "Panad0l vs Panadol" moment that impresses judges.
+
+
+
+DayPrimary TaskResponsibilitiesDeliverables1OCR Pipeline SetupIntegrate PaddleOCR; define text extraction schemaOCR extraction working locally2Metadata ExtractionExtract NAFDAC No., Batch, Expiry; normalize formatsClean structured metadata JSON3Spelling DetectionBuild custom dictionary for brands; detect typos & lookalikesLinguistic anomaly score4Grammar & Layout ChecksDetect missing required text fields; detect malformed labelsStructural text validation module5Confidence CalibrationWeight OCR confidence vs anomaly signalsText anomaly scoring logic6Integration TestingConnect OCR outputs to fusion engineStable text validation API7Demo CasesPrepare typo counterfeit exampleDemo-ready spelling test
+A3 - Greenbook RAG & Regulatory Lead
+What You're Building: NAFDAC Greenbook ingestion and regulatory cross-verification engine.
+Why It Matters: A valid-looking NAFDAC number means nothing if it belongs to another product category. You prevent regulatory mismatch fraud.
+Impact on Demo: You power the moment where the system says- "Valid number, wrong product category."
+
+
+
+DayPrimary TaskResponsibilitiesDeliverables1Greenbook StructuringClean NAFDAC Greenbook; format into ingestion-ready datasetStructured regulatory dataset2Vector DB SetupGenerate embeddings; load into ChromaDBSearchable vector store3Retrieval LogicImplement product-to-NAFDAC matching logicRetrieval API4Categorical AlignmentDetect mismatch (e.g., milk vs tomato paste)Regulatory mismatch engine5Confidence ScoringAssign regulatory validity scoreRegulatory score output6IntegrationConnect regulatory score to fusion systemLive regulatory validation7Demo PrepCreate mismatch counterfeit scenarioDemo-ready regulatory case
+A4 - Fusion, Intelligence & Monetization Architect
+What You're Building: Convert multi-signal detection outputs into structured, severity-ranked intelligence, and design a role-based access system that enables regulatory oversight and subscription-based manufacturer analytics.
+Why It Matters: You combine visual, linguistic, structural, and regulatory signals into one intelligent verdict. Without you, the system is just disconnected modules.
+Impact on Demo: You produce the final; Authentic / Suspicious / Fake + Confidence Level.
+You are the brain. The Fusion Engine feeds a centralized intelligence database with severity- ranked cases. Regulatory bodies receive full-spectrum access, while manufacturers access brand-specific analytics through a subscription-gated portal powered by role-based data filtering.
+
+DayPrimary TaskResponsibilitiesDeliverablesDay 1Fusion
+Architecture DesignDesign weighted scoring formula (visual + OCR
++ regulatory + linguistic + structure); define score thresholdsFusion framework documentDay 2Unified
+Intelligence SchemaDesign centralized intelligence database schema; include case ID, brand tag, severity score, geo-tag, channel typeIntelligence DB schema (JSON structure)Day 3Authenticity
+Decision EngineImplement final classification logic (Authentic / Suspicious / Fake + Confidence band)Working
+classification moduleDay 4Severity & Risk ModellingBuild severity tagging (Low, Medium, High
+Risk); include damage-adjusted weighting logicSeverity scoring layerDay 5Role-Based Access LogicDefine access tiers:
+• Regulatory = full dataset
+• Manufacturer = brand-scoped dataset only Design brand-tag filtering mechanismRole-based output schemaDay 6Monetization Logic
+StructuringDesign subscription logic hooks (API gating); define paid analytics fields (trend reports, channel analytics, geo clusters)Monetization-ready API structureDay 7Demo
+Intelligence OrchestrationEnsure flagged scan populates regulatory dashboard; ensure brand-scoped data appears only when filtered; prepare demo severity narrativeLive unified
+intelligence demo
+AI DEVELOPERS (D1-D8)
+D1 - Backend Lead (FastAPI Core)
+What You're Building: The FastAPI backbone that connects mobile ? AI ? database.
+Why It Matters: If backend fails, nothing works. You are the nervous system of the project.
+Impact on Demo: Ensures scanning feels real-time and seamless.
+
+
+
+DayPrimary TaskResponsibilitiesDeliverables1Backend SetupInitialize FastAPI; project structureRunning backend server2Image Upload APIBuild image upload endpointWorking upload API3AI Pipeline TriggerConnect upload ? AI pipelineAsync processing pipeline4Response StructuringReturn structured authenticity resultAPI response schema5LoggingStore evidence logsPersistent scan logs6OptimizationReduce latency; error handlingStable backend7DeploymentDeploy final APILive demo backend
+D2 - Database & Storage Engineer
+What You're Building: Secure evidence logging system (images, metadata, scores, purchase- channel, GPS).
+Why It Matters: SabiLens is not just detection; it is regulatory intelligence. Without structured logs, there is no enforcement story.
+Impact on Demo: Makes dashboard heatmap possible.
+
+
+
+DayPrimary TaskResponsibilitiesDeliverables1DB SchemaDesign scan log schemaDB structure created2Image StorageConfigure cloud/local image storageImage storage active3Evidence LoggingStore metadata + similarity scoresComplete evidence storage4Purchase-Channel LoggingAdd channel attribution storageChannel data saved5Query OptimizationImprove DB retrieval speedOptimized queries6Backup StrategyCreate backup systemRecovery mechanism7Demo StabilityFinal DB validationStable data persistence
+D3 - Mobile App Lead
+What You're Building: The user-facing experience.
+Why It Matters: Judges see the mobile app first. If UX feels clunky, the AI strength won't matter.
+Impact on Demo: Clean scan ? instant result ? voice feedback = wow factor.
+
+
+
+DayPrimary TaskResponsibilitiesDeliverables1App SetupInitialize Flutter/React NativeBase mobile app2Camera IntegrationCapture product imageWorking camera feature3API IntegrationConnect app to backendScan ? result flow4Result Display UIShow Authentic / Fake statusVisual decision screen5Purchase-Channel UIAdd vendor selection optionsChannel selection screen6Voice Feedback UIIntegrate voice playbackAudio feedback working7Demo PolishImprove UI & animationsDemo-ready mobile app
+D4 - GPS & Geo Engineer
+What You're Building: Mandatory location capture and geo-data structuring.
+Why It Matters: Counterfeit detection without location is useless for enforcement. You turn a scan into actionable intelligence.
+Impact on Demo: Enables live counterfeit heatmap.
+
+
+
+DayPrimary TaskResponsibilitiesDeliverables1GPS SetupEnable mandatory GPS captureGPS integrated2Location LoggingStore coordinates with scanLocation saved3Geo APICreate endpoint for geo dataGeo API ready4Data FormattingFormat for heatmap useGeo dataset structured5Heatmap Backend SupportProvide geo clusters to dashboardGeo clustering feed6TestingTest coordinate accuracyReliable location capture7Demo ValidationConfirm live mapping worksWorking geo demo
+D5 - Dashboard Frontend
+What You're Building: The regulatory and manufacturer dashboard.
+Why It Matters: This proves SabiLens is bigger than a consumer app. It shows government and B2B scalability.
+Impact on Demo: The heatmap visualization wins the room.
+
+
+
+DayPrimary TaskResponsibilitiesDeliverables1Admin Panel SetupCreate dashboard layoutBasic dashboard UI2Heatmap IntegrationIntegrate Mapbox/LeafletLive heatmap3Channel FiltersAdd purchase-channel filtersFilter controls4Metrics DisplayAdd score summaries & statsAnalytics cards5Manufacturer ViewAdd product-based analyticsBrand panel6UI RefinementImprove visuals & clarityClean dashboard7Demo StoryboardPrepare dashboard demo flowDemo-ready dashboard
+D6 - Voice & UX Integration
+What You're Building: Multilingual voice feedback and accessibility layer.
+Why It Matters: Mama Bola must understand the result instantly. Literacy barriers are real.
+Impact on Demo: When the app speaks in Yoruba or Pidgin, it humanizes the AI.
+
+
+
+DayPrimary TaskResponsibilitiesDeliverables1Audio FrameworkSetup voice playback moduleAudio module ready2Connect AI OutputConvert result to speechVoice output working3Language ToggleAdd language selectionLanguage selector4UX FeedbackAdd loading indicatorsBetter UX feedback5AccessibilityImprove readability & large fontsAccessible UI6Latency FixOptimize voice timingSmooth playback7Demo PrepValidate voice scenarioDemo voice working
+D7 - DevOps & Performance
+What You're Building: Deployment, containerization, performance optimization. Why It Matters: A crashing demo kills credibility. You ensure stability and speed. Impact on Demo: Everything runs smoothly on presentation day.
+
+
+DayPrimary TaskResponsibilitiesDeliverables1Docker SetupContainerize backendDockerized backend2Environment ConfigSetup staging environmentStaging ready3MonitoringAdd logging & monitoringPerformance logs4Load TestingSimulate scan loadsLoad test results5OptimizationReduce processing delayFaster inference6Deployment PrepPrepare demo serverDeployment-ready7Live Demo SupportMonitor during demoStable live system
+D8 - QA & Integration Engineer
+What You're Building: Full system testing, bug tracking, and edge-case validation.
+Why It Matters: You prevent embarrassing live failures. You protect the team.
+Impact on Demo: Confidence. Clean execution. No surprises.
+
+
+
+DayPrimary TaskResponsibilitiesDeliverables1Test PlanWrite full system test planQA checklist2Integration TestsTest mobile ? backend ? AIIntegration report3Edge Case TestingTest damaged packagingEdge case report4False Positive TestingValidate authenticity resultsCalibration feedback5Bug TrackingLog & track system bugsBug tracker6Final QA SweepFull system walkthroughQA clearance7Demo RehearsalSimulate judge interactionDemo stability report
