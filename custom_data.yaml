@@ -1,0 +1,28 @@
+train: new_annotated_images
+val: new_annotated_images # Can be the same or a separate validation set
+
+# nc: 7 # Number of classes (brand logo, product logo, NAFDAC, Barcode, Brand Design, Brand Color, Expiry Date)
+# names:
+#   [
+#     "brand logo",
+#     "product logo",
+#     "NAFDAC number",
+#     "Barcodes",
+#     "Brand designs",
+#     "Brand colors",
+#     "Expiry date",
+#   ]
+
+nc: 9 # Total number of classes
+names:
+  [
+    "brand logo",
+    "product logo",
+    "NAFDAC number",
+    "Barcodes",
+    "Brand designs",
+    "Brand colors",
+    "Expiry date",
+    "product name",
+    "product variant",
+  ]

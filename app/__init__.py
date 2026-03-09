@@ -1,1 +1,0 @@
-"""SabiLens Backend Application"""

@@ -1,0 +1,22 @@
+product_name,missing_required,missing_optional,status
+Golden_penny_pasta_spaghettini_500g,set(),"{'left.jpg', 'top.jpg', 'bottom.jpg', 'right.jpg'}",OK
+Pepsodent,set(),set(),OK
+Lipton_yellow_label_tea,set(),{'top.jpg'},OK
+Rexona_antiperspirant_gel,set(),"{'left.jpg', 'top.jpg', 'right.jpg'}",OK
+Kelloggs_go_grains_600g,set(),"{'bottom.jpg', 'top.jpg'}",OK
+Kelloggs_cornflakes_300g+45g,set(),set(),OK
+Terra_chicken_seasoning_50_cubes,set(),"{'left.jpg', 'top.jpg', 'bottom.jpg', 'right.jpg'}",OK
+Kelloggs_coco_pops_360g,set(),set(),OK
+vaseline_blueseal,set(),set(),OK
+Peppe_terra_cooking_tomato_paste,set(),"{'left.jpg', 'top.jpg', 'right.jpg'}",OK
+closeup_comple_fresh_protection,set(),set(),OK
+Dove_cream_bar,set(),set(),OK
+Indomie_chicken_flavor_70g,set(),"{'left.jpg', 'top.jpg', 'bottom.jpg', 'right.jpg'}",OK
+Dangote_sugar_refined_granulated_white_sugar_500g,set(),"{'left.jpg', 'top.jpg', 'bottom.jpg', 'right.jpg'}",OK
+vaseline_intensive_care,set(),set(),OK
+Sedoso_vegetable_oil_1l,set(),{'right.jpg'},OK
+Dove_coconut_jasmine_flower_antiperspirant_spray_250ml,set(),{'top.jpg'},OK
+familia_2_toilet_rolls,set(),"{'bottom.jpg', 'back.jpg'}",OK
+Dove_pear_aloevera_antiperspirant_spray_250ml,set(),"{'left.jpg', 'right.jpg'}",OK
+Golden_terra_soya_oil_5L,set(),set(),OK
+AXE_bodyspray_150ml,set(),{'right.jpg'},OK
