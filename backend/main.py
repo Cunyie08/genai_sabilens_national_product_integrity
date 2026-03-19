@@ -1,18 +1,24 @@
 """FastAPI application entrypoint."""
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
+from backend.routers.auth import router as auth_router
+from backend.routers.consumer import router as consumer_router
 from backend.routers.nafdac import router as nafdac_router
 from backend.routers.shared import router as shared_router
+
+logger = logging.getLogger("main")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager."""
+    logging.basicConfig(level=logging.INFO)
     print("SabiLens Backend Starting...")
     yield
     print("SabiLens Backend Shutdown...")
@@ -37,6 +43,8 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(auth_router, prefix="/api/v1/auth")
+app.include_router(consumer_router)
 app.include_router(nafdac_router)
 app.include_router(shared_router)
 

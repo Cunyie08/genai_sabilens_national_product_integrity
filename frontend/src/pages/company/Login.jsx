@@ -4,6 +4,7 @@ import Icon from '../../components/common/Icon';
 import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
+import { authApi } from '../../services/api';
 
 const CompanyLogin = () => {
   const navigate = useNavigate();
@@ -51,99 +52,58 @@ const CompanyLogin = () => {
     return formData.email && formData.password;
   };
 
-  const handleLogin = (e) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleLogin = async (e) => {
     e.preventDefault();
-    
     setTouched({ email: true, password: true });
-    
-    if (!isFormValid()) {
+    if (!isFormValid()) return;
+
+    setIsSubmitting(true);
+    try {
+      const response = await authApi.login({ email: formData.email, password: formData.password });
+      const { user, tokens } = response.data;
+
+      if (user.role !== 'company_admin') {
+        setModalConfig({
+          type: 'error',
+          title: 'Access Denied',
+          message: 'This account does not have company access. Please use the consumer login.'
+        });
+        setModalOpen(true);
+        return;
+      }
+
+      localStorage.setItem('accessToken', tokens.access_token);
+      localStorage.setItem('refreshToken', tokens.refresh_token);
+      localStorage.setItem('currentUser', JSON.stringify({
+        id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role,
+      }));
+
       setModalConfig({
-        type: 'error',
-        title: 'Validation Error',
-        message: 'Please fill in all required fields.'
+        type: 'success',
+        title: 'Login Successful!',
+        message: 'Welcome back! Redirecting to dashboard...'
       });
       setModalOpen(true);
-      return;
-    }
-
-    // Get users from localStorage
-    const users = JSON.parse(localStorage.getItem('users') || '[]');
-    const companies = JSON.parse(localStorage.getItem('companies') || '[]');
-    
-    console.log('Login attempt with:', formData.email);
-    console.log('All users:', users);
-    console.log('All companies:', companies);
-    
-    // Find user with matching email and password (case insensitive)
-    const user = users.find(u => 
-      u.email?.toLowerCase() === formData.email.toLowerCase() && 
-      u.password === formData.password
-    );
-    
-    console.log('Found user:', user);
-    
-    if (!user) {
+      setTimeout(() => {
+        setModalOpen(false);
+        navigate('/company/dashboard');
+      }, 1500);
+    } catch (error) {
       setModalConfig({
         type: 'error',
         title: 'Login Failed',
-        message: 'Invalid email or password. Please try again.'
+        message: error.message || 'Invalid email or password. Please try again.'
       });
       setModalOpen(true);
-      return;
+    } finally {
+      setIsSubmitting(false);
     }
-
-    // Check if user has company_admin role
-    if (user.role !== 'company_admin') {
-      setModalConfig({
-        type: 'error',
-        title: 'Access Denied',
-        message: 'This account does not have company access. Please use the consumer login.'
-      });
-      setModalOpen(true);
-      return;
-    }
-
-    // Get company details
-    const company = companies.find(c => c.id === user.companyId);
-    
-    console.log('Found company:', company);
-    
-    if (!company) {
-      setModalConfig({
-        type: 'error',
-        title: 'Login Failed',
-        message: 'Company record not found. Please contact support.'
-      });
-      setModalOpen(true);
-      return;
-    }
-    
-    // Store current user session with company details
-    localStorage.setItem('currentUser', JSON.stringify({
-      id: user.id,
-      email: user.email,
-      firstName: user.firstName || 'Admin',
-      lastName: user.lastName || company.name,
-      role: user.role,
-      companyId: user.companyId,
-      companyName: company.name
-    }));
-    
-    console.log('Stored currentUser:', JSON.parse(localStorage.getItem('currentUser')));
-    
-    // Show success modal before redirect
-    setModalConfig({
-      type: 'success',
-      title: 'Login Successful!',
-      message: `Welcome back, ${company.name}! Redirecting to dashboard...`
-    });
-    setModalOpen(true);
-    
-    // Redirect after a brief delay
-    setTimeout(() => {
-      setModalOpen(false);
-      navigate('/company/dashboard');
-    }, 1500);
   };
 
   return (
@@ -252,9 +212,9 @@ const CompanyLogin = () => {
               type="submit"
               variant="primary"
               fullWidth
-              disabled={!isFormValid()}
+              disabled={!isFormValid() || isSubmitting}
             >
-              Login to Dashboard
+              {isSubmitting ? 'Logging in...' : 'Login to Dashboard'}
             </Button>
           </form>
         </Card>

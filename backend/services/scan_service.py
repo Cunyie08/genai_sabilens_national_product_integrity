@@ -2,11 +2,20 @@
 from datetime import datetime
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, func
+from sqlalchemy import select, desc, func, delete
 
 from backend.models.scan import Scan, ScanAnalysis
 from backend.models.user import User
 from backend.models.product import Product
+
+# Scan status constants (mirrors the CHECK constraint on scans.status)
+class ScanStatus:
+    PENDING = "pending"
+    PROCESSING = "processing"
+    AUTHENTIC = "authentic"
+    SUSPICIOUS = "suspicious"
+    FAKE = "fake"
+    CAUTION = "caution"
 
 
 class ScanService:
