@@ -1,4 +1,4 @@
-from app.ocr_linguistic.pipeline import run_pipeline
+from backend.ocr_linguistic.pipeline import run_pipeline
 
 def test_pipeline_runs():
 
