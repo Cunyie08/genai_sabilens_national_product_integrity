@@ -1,4 +1,6 @@
-"""Configuration module"""
+"""
+Configuration — owned by tunjipaul.
+"""
 from typing import Any, Optional
 
 from pydantic import field_validator
@@ -20,10 +22,16 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
 
     # JWT
-    SECRET_KEY: str = "your-secret-key-change-in-production"
+    SECRET_KEY: str = "change-me-in-production"
+    ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
     AUTH_AUTO_ACTIVATE: bool = True
+
+    # RAG Service
+    RAG_SERVICE_URL: str = "http://127.0.0.1:8001"
+    RAG_SERVICE_TIMEOUT_SECONDS: float = 20.0
 
     # AI Service Endpoints
     AI_VISUAL_ENDPOINT: str = "http://localhost:8001/visual"

@@ -1,96 +1,94 @@
-"""Shared verification and location schemas"""
-from typing import Optional, List
+"""Shared verification and location schemas."""
 from pydantic import BaseModel
-from datetime import datetime
+from typing import Optional, List
+from uuid import UUID
 
 
-class NAFDACVerificationResponse(BaseModel):
-    """NAFDAC number verification response"""
-    nafdac_number: str
+# ─── Verification Schemas ────────────────────────────────
+
+class NAFDACVerifyResponse(BaseModel):
+    """NAFDAC number verification response."""
     is_valid: bool
     product_name: Optional[str] = None
-    manufacturer: Optional[str] = None
+    company_name: Optional[str] = None
+    category: Optional[str] = None
+    nafdac_number: str
     status: Optional[str] = None
-    expires_at: Optional[datetime] = None
-    company_id: Optional[str] = None
     message: str
 
 
-class BatchVerificationResponse(BaseModel):
-    """Batch number verification response"""
-    batch_number: str
+class BatchVerifyResponse(BaseModel):
+    """Batch number verification response."""
     is_valid: bool
     product_name: Optional[str] = None
+    batch_number: str
     manufacturing_date: Optional[str] = None
     expiry_date: Optional[str] = None
     message: str
 
 
-class ImageVerificationRequest(BaseModel):
-    """Image verification request"""
-    image_url: str
-    product_nafdac_number: Optional[str] = None
+class ImageVerifyRequest(BaseModel):
+    """Image verification request."""
+    image_urls: List[str]
+    nafdac_number: Optional[str] = None
 
 
-class ImageVerificationResponse(BaseModel):
-    """Image verification response"""
-    is_authentic: bool
-    confidence_score: float
-    detected_anomalies: Optional[List[str]] = None
+class ImageVerifyResponse(BaseModel):
+    """Image verification response."""
+    scan_id: UUID
+    status: str  # 'processing', 'authentic', 'suspicious', 'fake'
+    confidence_score: Optional[float] = None
     message: str
 
 
-class ProductVerificationResponse(BaseModel):
-    """Product verification response"""
-    product_id: str
-    nafdac_number: str
+class ProductPublicResponse(BaseModel):
+    """Public product details response."""
+    id: UUID
     name: str
-    manufacturer: str
+    manufacturer_name: Optional[str]
+    nafdac_number: str
+    category: Optional[str] = None
     status: str
-    is_registered: bool
-    company_id: Optional[str] = None
-    embeddings_count: int
-    message: str
+    image_urls: Optional[list] = None
 
+    class Config:
+        from_attributes = True
+
+
+# ─── Location Schemas ────────────────────────────────────
 
 class StateResponse(BaseModel):
-    """Nigerian state response"""
+    """Nigerian state response."""
     id: int
     name: str
     capital: Optional[str] = None
-    region: str
+    region: Optional[str] = None
 
-
-class StatesListResponse(BaseModel):
-    """States list response"""
-    states: List[StateResponse]
-    total: int
+    class Config:
+        from_attributes = True
 
 
 class CityResponse(BaseModel):
-    """City response"""
-    city: str
+    """City response."""
+    name: str
     state: str
-
-
-class CitiesListResponse(BaseModel):
-    """Cities list response"""
-    cities: List[CityResponse]
-    state: str
-    total: int
 
 
 class ReverseGeocodeRequest(BaseModel):
-    """Reverse geocode request"""
+    """Reverse geocode request."""
     latitude: float
     longitude: float
 
 
 class ReverseGeocodeResponse(BaseModel):
-    """Reverse geocode response"""
-    address: str
-    city: str
-    state: str
-    country: str
-    latitude: float
-    longitude: float
+    """Reverse geocode response."""
+    state: Optional[str] = None
+    city: Optional[str] = None
+    address: Optional[str] = None
+    formatted_location: str
+
+
+class RAGVerifyRequest(BaseModel):
+    """RAG-based product verification request."""
+    nafdac_no: str
+    scanned_subcategory: str

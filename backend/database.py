@@ -1,6 +1,15 @@
-"""Database connection and session management"""
+"""
+Database connection and session management — owned by tunjipaul.
+"""
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.orm import DeclarativeBase
+
 from backend.config import settings
+
+
+class Base(DeclarativeBase):
+    pass
+
 
 # Create async engine
 engine = create_async_engine(
@@ -20,9 +29,13 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 async def get_db() -> AsyncSession:
-    """Dependency to get database session"""
+    """Dependency to get database session."""
     async with AsyncSessionLocal() as session:
         try:
             yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
         finally:
             await session.close()
