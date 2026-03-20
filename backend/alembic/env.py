@@ -6,8 +6,9 @@ from alembic import context
 import os
 import sys
 
-# Add app to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# Add repo root to path so backend.* imports resolve.
+# Path: backend/alembic/env.py → backend/alembic → backend → repo_root
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from backend.config import settings
 from backend.models.user import Base as UserBase
@@ -27,9 +28,14 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 
+def _sync_url(url: str) -> str:
+    """Replace asyncpg driver with psycopg2 for synchronous Alembic migrations."""
+    return url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+
+
 def run_migrations_offline() -> None:
     """Run migrations in offline mode"""
-    url = settings.DATABASE_URL
+    url = _sync_url(settings.DATABASE_URL)
     context.configure(
         url=url,
         target_metadata=metadata,
@@ -44,7 +50,7 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     """Run migrations in online mode"""
     configuration = config.get_section(config.config_ini_section)
-    configuration["sqlalchemy.url"] = settings.DATABASE_URL
+    configuration["sqlalchemy.url"] = _sync_url(settings.DATABASE_URL)
 
     connectable = engine_from_config(
         configuration,

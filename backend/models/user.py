@@ -1,8 +1,24 @@
 """User and authentication models — owned by tunjipaul."""
 import uuid
+from enum import Enum
 from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from backend.database import Base
+
+
+class UserRole(str, Enum):
+    CONSUMER = "consumer"
+    COMPANY_ADMIN = "company_admin"
+    NAFDAC_OFFICER = "nafdac_officer"
+    NAFDAC_ADMIN = "nafdac_admin"
+    SUPER_ADMIN = "super_admin"
+
+
+class UserStatus(str, Enum):
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+    PENDING = "pending"
+    DELETED = "deleted"
 
 
 class User(Base):

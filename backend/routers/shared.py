@@ -23,8 +23,64 @@ from backend.schemas.shared import (
 )
 from backend.services.rag_client import rag_healthcheck, verify_product_with_rag
 from backend.utils.response import error_response, success_response
+import logging
+
+logger = logging.getLogger("shared.router")
 
 router = APIRouter(tags=["Shared"])
+
+
+# ── Hardcoded Nigerian states/cities fallback (used when DB is unavailable) ──
+
+_NIGERIAN_STATES = [
+    {"name": "Abia", "capital": "Umuahia", "region": "South East"},
+    {"name": "Adamawa", "capital": "Yola", "region": "North East"},
+    {"name": "Akwa Ibom", "capital": "Uyo", "region": "South South"},
+    {"name": "Anambra", "capital": "Awka", "region": "South East"},
+    {"name": "Bauchi", "capital": "Bauchi", "region": "North East"},
+    {"name": "Bayelsa", "capital": "Yenagoa", "region": "South South"},
+    {"name": "Benue", "capital": "Makurdi", "region": "North Central"},
+    {"name": "Borno", "capital": "Maiduguri", "region": "North East"},
+    {"name": "Cross River", "capital": "Calabar", "region": "South South"},
+    {"name": "Delta", "capital": "Asaba", "region": "South South"},
+    {"name": "Ebonyi", "capital": "Abakaliki", "region": "South East"},
+    {"name": "Edo", "capital": "Benin City", "region": "South South"},
+    {"name": "Ekiti", "capital": "Ado-Ekiti", "region": "South West"},
+    {"name": "Enugu", "capital": "Enugu", "region": "South East"},
+    {"name": "FCT", "capital": "Abuja", "region": "North Central"},
+    {"name": "Gombe", "capital": "Gombe", "region": "North East"},
+    {"name": "Imo", "capital": "Owerri", "region": "South East"},
+    {"name": "Jigawa", "capital": "Dutse", "region": "North West"},
+    {"name": "Kaduna", "capital": "Kaduna", "region": "North West"},
+    {"name": "Kano", "capital": "Kano", "region": "North West"},
+    {"name": "Katsina", "capital": "Katsina", "region": "North West"},
+    {"name": "Kebbi", "capital": "Birnin Kebbi", "region": "North West"},
+    {"name": "Kogi", "capital": "Lokoja", "region": "North Central"},
+    {"name": "Kwara", "capital": "Ilorin", "region": "North Central"},
+    {"name": "Lagos", "capital": "Ikeja", "region": "South West"},
+    {"name": "Nasarawa", "capital": "Lafia", "region": "North Central"},
+    {"name": "Niger", "capital": "Minna", "region": "North Central"},
+    {"name": "Ogun", "capital": "Abeokuta", "region": "South West"},
+    {"name": "Ondo", "capital": "Akure", "region": "South West"},
+    {"name": "Osun", "capital": "Osogbo", "region": "South West"},
+    {"name": "Oyo", "capital": "Ibadan", "region": "South West"},
+    {"name": "Plateau", "capital": "Jos", "region": "North Central"},
+    {"name": "Rivers", "capital": "Port Harcourt", "region": "South South"},
+    {"name": "Sokoto", "capital": "Sokoto", "region": "North West"},
+    {"name": "Taraba", "capital": "Jalingo", "region": "North East"},
+    {"name": "Yobe", "capital": "Damaturu", "region": "North East"},
+    {"name": "Zamfara", "capital": "Gusau", "region": "North West"},
+]
+
+_STATE_CITIES = {
+    "Lagos": ["Ikeja", "Victoria Island", "Lekki", "Surulere", "Ajah", "Yaba", "Ikoyi", "Badagry", "Epe", "Ikorodu"],
+    "FCT": ["Abuja", "Gwagwalada", "Kuje", "Bwari", "Kwali"],
+    "Rivers": ["Port Harcourt", "Obio-Akpor", "Eleme", "Okrika", "Oyigbo", "Bonny"],
+    "Kano": ["Kano", "Fagge", "Dala", "Gwale", "Tarauni", "Nassarawa"],
+    "Oyo": ["Ibadan", "Ogbomosho", "Oyo", "Iseyin", "Saki", "Kisi"],
+    "Kaduna": ["Kaduna", "Zaria", "Kafanchan", "Saminaka", "Birnin Gwari"],
+    "Anambra": ["Awka", "Onitsha", "Nnewi", "Ekwulobia", "Agulu"],
+}
 
 
 @router.get("/api/verify/nafdac/{number}", response_model=None)
@@ -32,42 +88,68 @@ async def verify_nafdac_number(
     number: str = Path(..., description="NAFDAC registration number"),
     db: AsyncSession = Depends(get_db),
 ):
+    # 1. Try the relational DB first
     try:
         result = await db.execute(select(Product).where(Product.nafdac_number == number))
         product = result.scalar_one_or_none()
 
-        if not product:
+        if product:
+            company_name = None
+            if product.company_id:
+                company = await db.get(Company, product.company_id)
+                company_name = company.name if company else None
+
+            category_name = None
+            if product.category_id:
+                category = await db.get(ProductCategory, product.category_id)
+                category_name = category.name if category else None
+
             return success_response(
                 data=NAFDACVerifyResponse(
-                    is_valid=False,
+                    is_valid=True,
+                    product_name=product.name,
+                    company_name=company_name,
+                    category=category_name,
                     nafdac_number=number,
-                    message="NAFDAC number not found in registry",
+                    status=product.status,
+                    message="NAFDAC number verified successfully",
                 ).model_dump()
             )
+    except Exception as db_exc:
+        logger.warning("DB unavailable for NAFDAC verify, falling back to ChromaDB: %s", db_exc)
 
-        company_name = None
-        if product.company_id:
-            company = await db.get(Company, product.company_id)
-            company_name = company.name if company else None
+    # 2. Fallback: query ChromaDB RAG (always available locally)
+    try:
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "ai_engine"))
+        from ai_engine.rag_system.retrieval.retriever import NAFDACRetriever
+        retriever = NAFDACRetriever()
+        results = retriever.retrieve(query=number, n_results=1)
+        if results:
+            r = results[0]
+            return success_response(
+                data=NAFDACVerifyResponse(
+                    is_valid=True,
+                    product_name=r.get("product_name", ""),
+                    company_name=r.get("manufacturer", ""),
+                    category=r.get("category", ""),
+                    nafdac_number=number,
+                    status="registered",
+                    message="NAFDAC number found in ChromaDB registry",
+                ).model_dump()
+            )
+    except Exception as chroma_exc:
+        logger.warning("ChromaDB NAFDAC lookup failed: %s", chroma_exc)
 
-        category_name = None
-        if product.category_id:
-            category = await db.get(ProductCategory, product.category_id)
-            category_name = category.name if category else None
-
-        return success_response(
-            data=NAFDACVerifyResponse(
-                is_valid=True,
-                product_name=product.name,
-                company_name=company_name,
-                category=category_name,
-                nafdac_number=number,
-                status=product.status,
-                message="NAFDAC number verified successfully",
-            ).model_dump()
-        )
-    except Exception as exc:
-        return error_response(str(exc), code="INTERNAL_ERROR", status_code=500)
+    # 3. Not found in any source
+    return success_response(
+        data=NAFDACVerifyResponse(
+            is_valid=False,
+            nafdac_number=number,
+            message="NAFDAC number not found in registry",
+        ).model_dump()
+    )
 
 
 @router.get("/api/verify/batch/{number}", response_model=None)
@@ -160,16 +242,21 @@ async def get_product_public_details(
 
 @router.get("/api/location/states", response_model=None)
 async def get_nigerian_states(db: AsyncSession = Depends(get_db)):
+    # Try DB first, fall back to hardcoded list
     try:
         result = await db.execute(select(NigerianState).order_by(NigerianState.name))
         states = result.scalars().all()
-        data = [
-            {"id": state.id, "name": state.name, "capital": state.capital, "region": state.region}
-            for state in states
-        ]
-        return success_response(data=data)
-    except Exception as exc:
-        return error_response(str(exc), code="INTERNAL_ERROR", status_code=500)
+        if states:
+            data = [
+                {"id": str(state.id) if state.id else None, "name": state.name, "capital": state.capital, "region": state.region}
+                for state in states
+            ]
+            return success_response(data=data)
+    except Exception as db_exc:
+        logger.warning("DB unavailable for states, using hardcoded fallback: %s", db_exc)
+
+    # Fallback: return hardcoded Nigerian states
+    return success_response(data=_NIGERIAN_STATES)
 
 
 @router.get("/api/location/cities/{state}", response_model=None)
@@ -177,6 +264,7 @@ async def get_cities_by_state(
     state: str = Path(..., description="Nigerian state name"),
     db: AsyncSession = Depends(get_db),
 ):
+    # Try DB first
     try:
         result = await db.execute(
             select(VendorLocation.city)
@@ -194,9 +282,20 @@ async def get_cities_by_state(
             if state_record and state_record.capital:
                 cities = [state_record.capital]
 
-        return success_response(data=[{"name": city, "state": state} for city in cities])
-    except Exception as exc:
-        return error_response(str(exc), code="INTERNAL_ERROR", status_code=500)
+        if cities:
+            return success_response(data=[{"name": city, "state": state} for city in cities])
+    except Exception as db_exc:
+        logger.warning("DB unavailable for cities, using hardcoded fallback: %s", db_exc)
+
+    # Fallback: return known cities or just the state capital
+    fallback_cities = _STATE_CITIES.get(state)
+    if not fallback_cities:
+        # Find capital from states list
+        state_info = next((s for s in _NIGERIAN_STATES if s["name"] == state), None)
+        capital = state_info["capital"] if state_info else state
+        fallback_cities = [capital]
+
+    return success_response(data=[{"name": city, "state": state} for city in fallback_cities])
 
 
 @router.post("/api/location/reverse-geocode", response_model=None)

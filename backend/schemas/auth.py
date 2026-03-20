@@ -1,7 +1,7 @@
 """Authentication request and response schemas"""
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from backend.models.user import UserRole, UserStatus
 
 
@@ -16,9 +16,14 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    """User login request"""
-    phone: str = Field(..., min_length=10, max_length=20)
+    """User login request — either phone or email must be provided"""
+    phone: Optional[str] = Field(None, min_length=10, max_length=20)
+    email: Optional[EmailStr] = None
     password: str = Field(...)
+
+    def model_post_init(self, __context) -> None:
+        if not self.phone and not self.email:
+            raise ValueError("Either phone or email must be provided")
 
 
 class VerifyOTPRequest(BaseModel):
@@ -65,6 +70,11 @@ class UserResponse(BaseModel):
     """User response"""
     id: str
     email: Optional[str] = None
+
+    @field_validator('id', mode='before')
+    @classmethod
+    def coerce_id_to_str(cls, v) -> str:
+        return str(v)
     phone: str
     first_name: str
     last_name: str

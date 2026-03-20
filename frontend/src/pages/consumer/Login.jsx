@@ -5,6 +5,7 @@ import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
 import Toast from '../../components/ui/Toast';
 import SabiLensLogo from '../../assets/SabiLens_Logo.png';
+import { authApi } from '../../services/api';
 
 const Login = () => {
   const navigate = useNavigate();
@@ -44,28 +45,21 @@ const Login = () => {
     if (!validateForm()) return;
     setIsSubmitting(true);
     try {
-      const users = JSON.parse(localStorage.getItem('users') || '[]');
-      const user = users.find(u => u.phone === formData.phone);
-      if (!user) {
-        setToast({ type: 'error', message: 'No account found with this phone number' });
-        setIsSubmitting(false);
-        return;
-      }
-      if (user.password !== formData.password) {
-        setToast({ type: 'error', message: 'Incorrect password. Please try again.' });
-        setIsSubmitting(false);
-        return;
-      }
+      const response = await authApi.login({ phone: formData.phone, password: formData.password });
+      const { user, tokens } = response.data;
+      localStorage.setItem('accessToken', tokens.access_token);
+      localStorage.setItem('refreshToken', tokens.refresh_token);
       localStorage.setItem('currentUser', JSON.stringify({
-        id: user.id || crypto.randomUUID(),
+        id: user.id,
         phone: user.phone,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role || 'consumer'
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role,
       }));
       navigate('/home');
     } catch (error) {
-      setToast({ type: 'error', message: 'An error occurred. Please try again.' });
+      const msg = error.message || 'Login failed. Please check your credentials.';
+      setToast({ type: 'error', message: msg });
       setIsSubmitting(false);
     }
   };

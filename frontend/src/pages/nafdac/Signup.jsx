@@ -4,6 +4,7 @@ import Icon from '../../components/common/Icon';
 import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
+import { authApi } from '../../services/api';
 
 const NAFDACSignup = () => {
     const navigate = useNavigate();
@@ -11,6 +12,7 @@ const NAFDACSignup = () => {
         firstName: '',
         lastName: '',
         officialEmail: '',
+        phone: '',
         officerId: '',
         department: '',
         password: '',
@@ -30,10 +32,14 @@ const NAFDACSignup = () => {
 
     const handleChange = (e) => {
         const { name, value, type, checked } = e.target;
-        setFormData(prev => ({
-            ...prev,
-            [name]: type === 'checkbox' ? checked : value
-        }));
+        if (name === 'phone') {
+            setFormData(prev => ({ ...prev, phone: value.replace(/\D/g, '') }));
+        } else {
+            setFormData(prev => ({
+                ...prev,
+                [name]: type === 'checkbox' ? checked : value
+            }));
+        }
     };
 
     const handleBlur = (name) => {
@@ -50,6 +56,8 @@ const NAFDACSignup = () => {
                     return 'Must be an official .gov.ng email';
                 }
                 return '';
+            case 'phone':
+                return /^[0-9]{10}$/.test(value) ? '' : 'Valid 10-digit phone number required';
             case 'officerId': return value ? '' : 'Officer ID is required';
             case 'password':
                 if (!value) return 'Password is required';
@@ -74,48 +82,42 @@ const NAFDACSignup = () => {
         return Object.keys(formData).every(key => !validateField(key, formData[key]));
     };
 
-    const handleSubmit = (e) => {
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleSubmit = async (e) => {
         e.preventDefault();
         setTouched(Object.keys(formData).reduce((acc, key) => ({ ...acc, [key]: true }), {}));
 
         if (!isFormValid()) return;
 
-        // Simulate registration
-        const users = JSON.parse(localStorage.getItem('users') || '[]');
-        const emailExists = users.some(u => u.email === formData.officialEmail);
+        setIsSubmitting(true);
+        try {
+            const response = await authApi.register({
+                email: formData.officialEmail,
+                phone: `+234${formData.phone}`,
+                password: formData.password,
+                first_name: formData.firstName,
+                last_name: formData.lastName,
+                role: 'nafdac_officer',
+            });
 
-        if (emailExists) {
+            setModalConfig({
+                type: 'success',
+                title: 'Request Submitted',
+                message: 'Your regulatory access request has been submitted. You will be notified via your official email.'
+            });
+            setModalOpen(true);
+        } catch (error) {
+            const msg = error.message || 'Registration failed. Please try again.';
             setModalConfig({
                 type: 'error',
                 title: 'Registration Failed',
-                message: 'This official email is already registered.'
+                message: msg
             });
             setModalOpen(true);
-            return;
+        } finally {
+            setIsSubmitting(false);
         }
-
-        const newUser = {
-            id: `nafdac_${Date.now()}`,
-            email: formData.officialEmail,
-            password: formData.password,
-            firstName: formData.firstName,
-            lastName: formData.lastName,
-            role: 'nafdac_officer',
-            status: 'pending', // Regulatory accounts usually need approval
-            department: formData.department,
-            officerId: formData.officerId,
-            createdAt: new Date().toISOString()
-        };
-
-        users.push(newUser);
-        localStorage.setItem('users', JSON.stringify(users));
-
-        setModalConfig({
-            type: 'success',
-            title: 'Request Submitted',
-            message: 'Your regulatory access request has been submitted for approval. You will be notified via your official email.'
-        });
-        setModalOpen(true);
     };
 
     const handleModalClose = () => {
@@ -208,6 +210,25 @@ const NAFDACSignup = () => {
                             </div>
                         </div>
 
+                        {/* Phone */}
+                        <div>
+                            <label className="text-sm font-medium text-accent mb-1 block">Phone Number</label>
+                            <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium">+234</span>
+                                <input
+                                    type="tel"
+                                    name="phone"
+                                    value={formData.phone}
+                                    onChange={handleChange}
+                                    onBlur={() => handleBlur('phone')}
+                                    placeholder="8012345678"
+                                    maxLength="10"
+                                    className={`w-full pl-16 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 ${getFieldError('phone') ? 'border-danger' : 'border-gray-200'}`}
+                                />
+                            </div>
+                            {getFieldError('phone') && <p className="text-danger text-xs mt-1">{getFieldError('phone')}</p>}
+                        </div>
+
                         {/* Department */}
                         <div>
                             <label className="text-sm font-medium text-accent mb-1 block">Department / Unit</label>
@@ -282,8 +303,9 @@ const NAFDACSignup = () => {
                             variant="primary"
                             fullWidth
                             size="lg"
+                            disabled={isSubmitting}
                         >
-                            Submit Registration Request
+                            {isSubmitting ? 'Submitting...' : 'Submit Registration Request'}
                         </Button>
 
                         <p className="text-center text-sm text-muted">

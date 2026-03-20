@@ -1,10 +1,15 @@
 """
 Configuration — owned by tunjipaul.
 """
+from pathlib import Path
 from typing import Any, Optional
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
+
+# Resolve .env relative to this file so it loads correctly regardless of
+# the working directory (e.g. running uvicorn from the repo root).
+_ENV_FILE = Path(__file__).parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -41,6 +46,9 @@ class Settings(BaseSettings):
 
     # File Storage
     CLOUDINARY_URL: Optional[str] = None
+    CLOUDINARY_CLOUD_NAME: Optional[str] = None
+    CLOUDINARY_API_KEY: Optional[str] = None
+    CLOUDINARY_API_SECRET: Optional[str] = None
     AWS_ACCESS_KEY_ID: Optional[str] = None
     AWS_SECRET_ACCESS_KEY: Optional[str] = None
     AWS_S3_BUCKET: Optional[str] = None
@@ -61,8 +69,9 @@ class Settings(BaseSettings):
         return value
 
     class Config:
-        env_file = ".env"
+        env_file = str(_ENV_FILE)
         case_sensitive = True
+        extra = "ignore"  # Ignore unknown env vars (e.g. SUPABASE_URL, SUPABASE_ANON_KEY)
 
 
 settings = Settings()

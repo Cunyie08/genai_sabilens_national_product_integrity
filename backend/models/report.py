@@ -1,8 +1,33 @@
 """Report related models — owned by Mr Openx."""
 import uuid
+from enum import Enum
 from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Numeric, Integer, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from backend.database import Base
+
+
+class ReportStatus(str, Enum):
+    PENDING = "pending"
+    VERIFIED = "verified"
+    INVESTIGATING = "investigating"
+    RESOLVED = "resolved"
+    REJECTED = "rejected"
+
+
+class Severity(str, Enum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class PurchaseChannel(str, Enum):
+    MARKET_STALL = "market_stall"
+    ROADSIDE_VENDOR = "roadside_vendor"
+    SUPERMARKET = "supermarket"
+    SUPPLIER = "supplier"
+    ONLINE = "online"
+    OTHER = "other"
 
 
 class Report(Base):

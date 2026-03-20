@@ -7,6 +7,7 @@ import Card from '../../components/common/Card';
 import Modal from '../../components/common/Modal';
 import Toast from '../../components/ui/Toast';
 import SabiLensLogo from '../../assets/SabiLens_Logo.png';
+import { authApi } from '../../services/api';
 
 // Nigeria states data
 const NIGERIA_STATES = [
@@ -241,30 +242,23 @@ const ConsumerSignup = () => {
     setIsSubmitting(true);
 
     try {
-      const users = JSON.parse(localStorage.getItem('users') || '[]');
-
-      // Check if phone exists
-      if (users.some(u => u.phone === formData.phone)) {
-        setErrors({ phone: 'This phone number is already registered' });
-        setIsSubmitting(false);
-        return;
-      }
-
-      const newUser = {
-        id: `user_${Date.now()}`,
-        firstName: formData.firstName,
-        lastName: formData.lastName,
+      const response = await authApi.register({
         phone: formData.phone,
-        state: formData.state,
-        city: formData.city,
         password: formData.password,
+        first_name: formData.firstName,
+        last_name: formData.lastName,
         role: 'consumer',
-        createdAt: new Date().toISOString()
-      };
-
-      users.push(newUser);
-      localStorage.setItem('users', JSON.stringify(users));
-      localStorage.setItem('currentUser', JSON.stringify(newUser));
+      });
+      const { user, tokens } = response.data;
+      localStorage.setItem('accessToken', tokens.access_token);
+      localStorage.setItem('refreshToken', tokens.refresh_token);
+      localStorage.setItem('currentUser', JSON.stringify({
+        id: user.id,
+        phone: user.phone,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role,
+      }));
       localStorage.setItem('hasSeenOnboarding', 'true');
 
       setModalConfig({
@@ -279,10 +273,12 @@ const ConsumerSignup = () => {
       }, 2000);
 
     } catch (error) {
-      setToast({
-        type: 'error',
-        message: 'Something went wrong. Please try again.'
-      });
+      const msg = error.message || 'Something went wrong. Please try again.';
+      if (msg.toLowerCase().includes('already exists') || msg.toLowerCase().includes('already registered')) {
+        setErrors({ phone: 'This phone number is already registered' });
+      } else {
+        setToast({ type: 'error', message: msg });
+      }
       setIsSubmitting(false);
     }
   };

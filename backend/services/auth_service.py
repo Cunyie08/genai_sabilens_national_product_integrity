@@ -20,8 +20,14 @@ class AuthService:
     @staticmethod
     async def register_user(db: AsyncSession, req: RegisterRequest) -> Tuple[UserResponse, TokenResponse]:
         """Register new user"""
-        # Check if user exists
-        stmt = select(User).where((User.phone == req.phone) | (User.email == req.email))
+        # Check if user exists — only check email uniqueness if email was provided.
+        # When email is None, SQLAlchemy generates "email IS NULL" which would match
+        # every user without an email, causing all registrations to fail.
+        from sqlalchemy import or_
+        conditions = [User.phone == req.phone]
+        if req.email is not None:
+            conditions.append(User.email == req.email)
+        stmt = select(User).where(or_(*conditions))
         existing = await db.execute(stmt)
         if existing.scalars().first():
             raise ValueError("User already exists")
@@ -62,7 +68,7 @@ class AuthService:
         
         # Create tokens
         tokens = await AuthService.create_tokens(user)
-        user_resp = UserResponse.from_orm(user)
+        user_resp = UserResponse.model_validate(user)
         
         return user_resp, tokens
     
@@ -70,7 +76,13 @@ class AuthService:
     @staticmethod
     async def login_user(db: AsyncSession, req: LoginRequest) -> Tuple[UserResponse, TokenResponse]:
         """Login user"""
-        stmt = select(User).where(User.phone == req.phone)
+        from sqlalchemy import or_
+        conditions = []
+        if req.phone:
+            conditions.append(User.phone == req.phone)
+        if req.email:
+            conditions.append(User.email == req.email)
+        stmt = select(User).where(or_(*conditions))
         result = await db.execute(stmt)
         user = result.scalars().first()
         
@@ -87,7 +99,7 @@ class AuthService:
         
         # Create tokens
         tokens = await AuthService.create_tokens(user)
-        user_resp = UserResponse.from_orm(user)
+        user_resp = UserResponse.model_validate(user)
         
         return user_resp, tokens
     
@@ -95,8 +107,9 @@ class AuthService:
     @staticmethod
     async def create_tokens(user: User) -> TokenResponse:
         """Create access and refresh tokens"""
-        access_token = create_access_token({"sub": user.id, "role": user.role.value})
-        refresh_token = create_refresh_token({"sub": user.id})
+        role = user.role.value if hasattr(user.role, "value") else str(user.role)
+        access_token = create_access_token({"sub": str(user.id), "role": role})
+        refresh_token = create_refresh_token({"sub": str(user.id)})
         
         return TokenResponse(
             access_token=access_token,

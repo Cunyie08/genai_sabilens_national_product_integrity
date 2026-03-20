@@ -1,8 +1,11 @@
 """Auth routes (PUBLIC)"""
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
+
+logger = logging.getLogger("auth")
 from backend.utils.response import success_response, error_response
 from backend.schemas.auth import (
     RegisterRequest, LoginRequest, VerifyOTPRequest, ResendOTPRequest,
@@ -21,21 +24,17 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     try:
         user, tokens = await AuthService.register_user(db, req)
         return success_response({
-            "user": user.dict(),
-            "tokens": tokens.dict()
+            "user": user.model_dump(mode="json"),
+            "tokens": tokens.model_dump(mode="json")
         }, status_code=201)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except SQLAlchemyError:
-        raise HTTPException(
-            status_code=503,
-            detail="Database unavailable. Check DATABASE_URL credentials and database status.",
-        )
-    except Exception:
-        raise HTTPException(
-            status_code=503,
-            detail="Database connection failed. Verify Postgres is running and DATABASE_URL credentials are correct.",
-        )
+    except SQLAlchemyError as e:
+        logger.error("Register SQLAlchemy error: %s: %s", type(e).__name__, e, exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e.orig) if hasattr(e, 'orig') and e.orig else str(e))
+    except Exception as e:
+        logger.error("Register unexpected error: %s: %s", type(e).__name__, e, exc_info=True)
+        raise HTTPException(status_code=503, detail=f"{type(e).__name__}: {e}")
 
 
 @router.post("/login")
@@ -44,21 +43,17 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     try:
         user, tokens = await AuthService.login_user(db, req)
         return success_response({
-            "user": user.dict(),
-            "tokens": tokens.dict()
+            "user": user.model_dump(mode="json"),
+            "tokens": tokens.model_dump(mode="json")
         })
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
-    except SQLAlchemyError:
-        raise HTTPException(
-            status_code=503,
-            detail="Database unavailable. Check DATABASE_URL credentials and database status.",
-        )
-    except Exception:
-        raise HTTPException(
-            status_code=503,
-            detail="Database connection failed. Verify Postgres is running and DATABASE_URL credentials are correct.",
-        )
+    except SQLAlchemyError as e:
+        logger.error("Login SQLAlchemy error: %s: %s", type(e).__name__, e, exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e.orig) if hasattr(e, 'orig') and e.orig else str(e))
+    except Exception as e:
+        logger.error("Login unexpected error: %s: %s", type(e).__name__, e, exc_info=True)
+        raise HTTPException(status_code=503, detail=f"{type(e).__name__}: {e}")
 
 
 @router.post("/logout")
@@ -76,7 +71,7 @@ async def refresh_token(req: RefreshTokenRequest, db: AsyncSession = Depends(get
     """Refresh access token"""
     try:
         tokens = await AuthService.refresh_access_token(db, req.refresh_token)
-        return success_response({"tokens": tokens.dict()})
+        return success_response({"tokens": tokens.model_dump(mode="json")})
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
 

@@ -1,20 +1,20 @@
 """
 OCR Extractor
 Handles:
-  - Running PaddleOCR on the product image
+  - Running EasyOCR on the product image
   - Parsing raw text blocks into structured metadata JSON
 
 NAFDAC FALLBACK STRATEGY:
   If the primary full-image OCR pass doesn't find a NAFDAC number,
   a second pass runs on a cropped + upscaled bottom 25% of the image.
   NAFDAC numbers on Nigerian product labels almost always appear in the
-  bottom section in small print. Upscaling that region 2x gives PaddleOCR
-  a much better chance of reading it.
+  bottom section in small print. Upscaling that region 2x gives the OCR
+  engine a much better chance of reading it.
 """
 
 import cv2
 import numpy as np
-from paddleocr import PaddleOCR
+import easyocr
 from .config import (
     NAFDAC_IN_TEXT_PATTERN,
     NAFDAC_PATTERN,
@@ -24,14 +24,14 @@ from .config import (
 )
 
 
-# Initialize PaddleOCR once at module level (avoids reloading model repeatedly)
-# use_angle_cls=True handles rotated or tilted text on packaging
+# Initialize EasyOCR Reader once at module level (avoids reloading model repeatedly)
+# gpu=False for CPU-only environments (Windows without CUDA)
 _ocr_engine = None
 
 def get_ocr_engine():
     global _ocr_engine
     if _ocr_engine is None:
-        _ocr_engine = PaddleOCR(use_angle_cls=True, lang="en", ocr_version="PP-OCRv4")
+        _ocr_engine = easyocr.Reader(['en'], gpu=False, verbose=False)
     return _ocr_engine
 
 
@@ -57,24 +57,24 @@ def extract_text_blocks(image_path: str) -> list[dict]:
     """
     ocr_engine = get_ocr_engine()
 
-    # Primary pass: full image 
-    results = ocr_engine.ocr(image_path)
+    # Primary pass: full image
+    results = ocr_engine.readtext(image_path)
     blocks  = _parse_ocr_results(results)
 
-    # Check if NAFDAC was found 
+    # Check if NAFDAC was found
     full_text = " ".join(b["text"] for b in blocks)
     nafdac    = extract_nafdac_number(full_text)
 
     if nafdac:
         return blocks
 
-    # Fallback pass: bottom 25% crop + 2x upscale 
+    # Fallback pass: bottom 25% crop + 2x upscale
     # NAFDAC numbers are printed in small text at the bottom of Nigerian labels.
     # Upscaling the crop 2x before OCR significantly improves detection rate.
     bottom_crop = _crop_bottom(image_path, fraction=0.30, upscale=2.0)
 
     if bottom_crop is not None:
-        fallback_results = ocr_engine.ocr(bottom_crop)
+        fallback_results = ocr_engine.readtext(bottom_crop)
         fallback_blocks  = _parse_ocr_results(fallback_results)
 
         # Merge fallback blocks — deduplicate by text content
@@ -87,13 +87,15 @@ def extract_text_blocks(image_path: str) -> list[dict]:
     return blocks
 
 def _parse_ocr_results(results) -> list:
-    """Parse raw PaddleOCR results into clean block dicts."""
+    """Parse raw EasyOCR results into clean block dicts.
+    EasyOCR returns: [(bbox, text, confidence), ...]
+    """
     blocks = []
-    if not results or not results[0]:
+    if not results:
         return blocks
-    for line in results[0]:
-        text       = line[1][0].strip()
-        confidence = round(line[1][1], 4)
+    for item in results:
+        text       = item[1].strip()
+        confidence = round(float(item[2]), 4)
         if text:
             blocks.append({"text": text, "confidence": confidence})
     return blocks
@@ -108,7 +110,7 @@ def _crop_bottom(image_path: str, fraction: float = 0.30, upscale: float = 2.0):
         upscale:    Scale factor for upscaling the crop.
 
     Returns:
-        Upscaled numpy array ready for PaddleOCR, or None if image can't be read.
+        Upscaled numpy array ready for EasyOCR, or None if image can't be read.
     """
     img = cv2.imread(image_path)
     if img is None:
