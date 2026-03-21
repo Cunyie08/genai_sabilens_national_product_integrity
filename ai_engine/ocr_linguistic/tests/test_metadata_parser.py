@@ -1,4 +1,4 @@
-from app.ocr_linguistic.metadata_parser import extract_structured_metadata
+from backend.ocr_linguistic.metadata_parser import extract_structured_metadata
 
 def test_nafdac_extraction():
 

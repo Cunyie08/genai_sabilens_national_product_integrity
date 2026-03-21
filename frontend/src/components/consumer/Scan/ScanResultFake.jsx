@@ -13,36 +13,65 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
   const [scanData, setScanData] = useState(null);
 
   useEffect(() => {
-    // Get scan data from session storage
     const storedScan = sessionStorage.getItem('currentScan');
     let productImage = null;
-    let isAuthentic = false;
-    
+    let aiResult = null;
+    let scanLocation = '';
+    let scanLat = null;
+    let scanLng = null;
+
     if (storedScan) {
-      const parsed = JSON.parse(storedScan);
-      productImage = parsed.productImage;
-      isAuthentic = parsed.isAuthentic;
+      try {
+        const parsed = JSON.parse(storedScan);
+        productImage = parsed.productImage;
+        aiResult = parsed.aiResult || null;
+        scanLocation = parsed.location || '';
+        scanLat = parsed.latitude ?? null;
+        scanLng = parsed.longitude ?? null;
+      } catch {}
     }
 
-    const scanData = {
-      product: 'Nike Air Max 270 (Counterfeit)',
-      productImage: productImage || getProductImage('Nike Air Max 270', 'Footwear'),
-      category: 'Footwear',
-      manufacturer: 'Unknown',
-      nafdacNumber: 'Invalid',
-      batchNumber: 'FAKE-BATCH-001',
-      expiryDate: 'Expired',
-      status: 'fake',
-      similarity: 23,
-      location: 'Lagos Market',
+    const confidence = aiResult?.confidence_pct ?? (
+      aiResult?.confidence_score != null
+        ? Math.round((aiResult.confidence_score || 0) * 100)
+        : 18
+    );
+
+    // Extract issues from AI warnings or evidence
+    const warnings = aiResult?.warnings || [];
+    const issues = warnings.length > 0
+      ? warnings.map((w) => w?.message || w?.type || String(w))
+      : aiResult?.detail
+        ? [aiResult.detail]
+        : ['Product did not match NAFDAC registry', 'Packaging anomalies detected'];
+
+    const data = {
+      product: aiResult?.evidence_package?.product_name || 'Unregistered Product',
+      productImage: productImage || 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400',
+      category: aiResult?.evidence_package?.category || 'Unknown',
+      manufacturer: 'Unknown / Unregistered',
+      nafdacNumber: 'Not Found',
+      batchNumber: 'Invalid',
+      status: aiResult?.final_verdict || aiResult?.verdict || 'FAKE',
+      similarity: confidence,
+      confidence,
+      severity: aiResult?.severity || 'CRITICAL',
+      action: aiResult?.action || 'DO NOT BUY',
+      instruction: aiResult?.simple_instruction || 'Do not buy this product. It appears to be counterfeit.',
+      summary: aiResult?.summary || '',
+      detail: aiResult?.detail || '',
+      issues,
+      warnings,
+      location: scanLocation || (scanLat && scanLng ? `${scanLat.toFixed(4)}° N, ${scanLng.toFixed(4)}° E` : 'Location unavailable'),
+      latitude: scanLat,
+      longitude: scanLng,
       time: 'Today, ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       verified: false,
-      issues: ['Category mismatch', 'Packaging anomaly', 'Invalid batch number'],
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
-    
-    setScanData(scanData);
-    saveScanToHistory(scanData);
+
+    setScanData(data);
+    saveScanToHistory(data);
   }, []);
 
   const handleReportSubmit = () => {
@@ -118,34 +147,18 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
             Why this product is flagged:
           </h3>
           <div className="bg-danger/5 rounded-xl p-4">
+            {scanData.summary && (
+              <p className="text-sm text-gray-700 mb-3 font-medium">{scanData.summary}</p>
+            )}
             <ul className="space-y-3 text-sm">
-              <li className="flex items-start gap-3">
-                <div className="w-5 h-5 bg-danger/10 rounded-full flex items-center justify-center mt-0.5">
-                  <Icon name="X" size={12} className="text-danger" library="fi" />
-                </div>
-                <div>
-                  <span className="font-medium text-gray-700">Category mismatch</span>
-                  <p className="text-xs text-gray-500 mt-1">Product category does not match NAFDAC registration</p>
-                </div>
-              </li>
-              <li className="flex items-start gap-3">
-                <div className="w-5 h-5 bg-danger/10 rounded-full flex items-center justify-center mt-0.5">
-                  <Icon name="X" size={12} className="text-danger" library="fi" />
-                </div>
-                <div>
-                  <span className="font-medium text-gray-700">Packaging anomaly</span>
-                  <p className="text-xs text-gray-500 mt-1">Hologram missing, font inconsistencies detected</p>
-                </div>
-              </li>
-              <li className="flex items-start gap-3">
-                <div className="w-5 h-5 bg-danger/10 rounded-full flex items-center justify-center mt-0.5">
-                  <Icon name="X" size={12} className="text-danger" library="fi" />
-                </div>
-                <div>
-                  <span className="font-medium text-gray-700">Invalid batch number</span>
-                  <p className="text-xs text-gray-500 mt-1">Batch number not found in manufacturer database</p>
-                </div>
-              </li>
+              {scanData.issues.map((issue, idx) => (
+                <li key={idx} className="flex items-start gap-3">
+                  <div className="w-5 h-5 bg-danger/10 rounded-full flex items-center justify-center mt-0.5 shrink-0">
+                    <Icon name="X" size={12} className="text-danger" library="fi" />
+                  </div>
+                  <span className="text-gray-700">{issue}</span>
+                </li>
+              ))}
             </ul>
           </div>
         </div>
@@ -153,14 +166,14 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
         {/* Similarity Score */}
         <div className="p-4 border-b border-gray-100">
           <div className="flex justify-between items-center mb-2">
-            <span className="text-sm font-medium text-gray-700">AI Similarity Score</span>
+            <span className="text-sm font-medium text-gray-700">AI Confidence Score</span>
             <span className="text-sm font-bold text-danger">{scanData.similarity}%</span>
           </div>
           <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-            <div className="w-[23%] h-full bg-danger rounded-full" style={{ width: `${scanData.similarity}%` }} />
+            <div className="h-full bg-danger rounded-full" style={{ width: `${scanData.similarity}%` }} />
           </div>
           <p className="text-xs text-gray-400 mt-2">
-            Low similarity indicates this product does not match authentic samples
+            {scanData.detail || 'Low confidence — product does not match authentic samples in the NAFDAC registry.'}
           </p>
         </div>
 
@@ -178,12 +191,14 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
           </div>
           <div className="mt-2 bg-gray-50 p-3 rounded-lg flex items-center gap-2">
             <Icon name="Navigation" size={16} className="text-primary" library="fi" />
-            <span className="text-sm font-medium">{scanData.location}, Shop 42, Idumota</span>
+            <span className="text-sm font-medium">{scanData.location}</span>
           </div>
-          <div className="mt-2 text-xs text-gray-400 flex items-center gap-1">
-            <Icon name="Clock" size={12} library="fi" />
-            <span>Coordinates: 6.4531° N, 3.3958° E • Exact location recorded</span>
-          </div>
+          {scanData.latitude && scanData.longitude ? (
+            <div className="mt-2 text-xs text-gray-400 flex items-center gap-1">
+              <Icon name="Clock" size={12} library="fi" />
+              <span>Coordinates: {scanData.latitude.toFixed(5)}° N, {scanData.longitude.toFixed(5)}° E • Exact location recorded</span>
+            </div>
+          ) : null}
         </div>
 
         {/* Risk Factors */}
@@ -201,20 +216,22 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
           </div>
         </div>
 
-        {/* Warning Signs */}
-        <div className="p-4 border-b border-gray-100">
-          <h3 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
-            <Icon name="AlertOctagon" size={16} className="text-danger" library="fi" />
-            Warning Signs Detected
-          </h3>
-          <div className="flex flex-wrap gap-2">
-            <span className="text-xs bg-danger/10 text-danger px-3 py-1 rounded-full">Missing hologram</span>
-            <span className="text-xs bg-danger/10 text-danger px-3 py-1 rounded-full">Wrong font</span>
-            <span className="text-xs bg-danger/10 text-danger px-3 py-1 rounded-full">Expired</span>
-            <span className="text-xs bg-danger/10 text-danger px-3 py-1 rounded-full">Invalid barcode</span>
-            <span className="text-xs bg-danger/10 text-danger px-3 py-1 rounded-full">Poor print quality</span>
+        {/* Warning Signs — derived from actual AI signals */}
+        {scanData.warnings?.length > 0 && (
+          <div className="p-4 border-b border-gray-100">
+            <h3 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+              <Icon name="AlertOctagon" size={16} className="text-danger" library="fi" />
+              Warning Signs Detected
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              {scanData.warnings.map((w, i) => (
+                <span key={i} className="text-xs bg-danger/10 text-danger px-3 py-1 rounded-full">
+                  {w?.type || w?.message || String(w)}
+                </span>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </Card>
 
       {/* Actions */}

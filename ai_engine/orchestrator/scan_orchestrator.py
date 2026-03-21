@@ -177,6 +177,7 @@ class ScanOrchestrator:
         scanned_category: str,
         gps_coordinates:  dict,
         purchase_channel: str,
+        image_paths:      Optional[list] = None,
         receipt_image:    Optional[str] = None,
         storefront_image: Optional[str] = None,
         damage_score:     float = 0.0,
@@ -185,31 +186,35 @@ class ScanOrchestrator:
         Run the full Visual -> OCR -> Regulatory -> Fusion scan pipeline.
 
         Args:
-            image_path:       Absolute path to the product label image.
-            nafdac_no:        NAFDAC number. Can be pre-extracted or empty string
-                              (Ocr will attempt extraction; regulatory uses Ocr's result).
-            scanned_category: Product type hint (e.g. "corn flakes", "body spray").
-                              Mapped to NAFDAC category before regulatory call.
+            image_path:       Primary image path (front of product). Always required.
+            image_paths:      All image paths [front, back, side, detail]. When provided,
+                              OCR and Vision process all images for a richer signal.
+            nafdac_no:        NAFDAC number. Can be empty (OCR will attempt extraction).
+            scanned_category: Product type hint mapped to NAFDAC category before regulatory.
             gps_coordinates:  {"lat": float, "lng": float, "accuracy": float}
-            purchase_channel: "open_market" | "supermarket" | "pharmacy" |
-                              "traffic_vendor" | "online" | "unknown"
-            receipt_image:    Optional path/base64 for NAFDAC evidence package.
-            storefront_image: Optional path/base64 for NAFDAC evidence package.
-            damage_score:     Scan quality from vision DamageDetector - passed to ocr.
+            purchase_channel: "open_market" | "supermarket" | "pharmacy" | etc.
+            receipt_image:    Optional extra image for evidence package.
+            storefront_image: Optional extra image for evidence package.
+            damage_score:     Scan quality from vision DamageDetector — passed to ocr.
 
         Returns:
-            PipelineResult with all verdict fields from fusion's ScanResult.t.
+            PipelineResult with all verdict fields from fusion's ScanResult.
         """
+        # Normalise image list — primary is always first
+        all_image_paths = list(image_paths) if image_paths else [image_path]
+        all_image_paths = [p for p in all_image_paths if p and p != "EXPLAIN_MODE_NO_IMAGE"]
+        if not all_image_paths:
+            all_image_paths = [image_path]
+
         logger.info(
-            "scan() | nafdac_no=%s | category=%s | channel=%s | image=%s",
-            nafdac_no, scanned_category, purchase_channel, image_path,
+            "scan() | nafdac_no=%s | category=%s | channel=%s | images=%d | primary=%s",
+            nafdac_no, scanned_category, purchase_channel, len(all_image_paths), image_path,
         )
 
-        # Collect ocr signal 
-        ocr_signal = self._run_ocr(image_path, damage_score)
+        # Collect OCR signal — runs on all provided images, merges results
+        ocr_signal = self._run_ocr_multi(all_image_paths, damage_score)
 
-        
-        # Use Ocr's extracted NAFDAC number if caller did not pre-extract one
+        # Use OCR's extracted NAFDAC number if caller did not pre-extract one
         effective_nafdac = nafdac_no or (
             ocr_signal.payload
             .get("metadata", {})
@@ -220,8 +225,8 @@ class ScanOrchestrator:
         nafdac_category   = _map_to_nafdac_category(scanned_category)
         regulatory_signal = self._run_regulatory(effective_nafdac, nafdac_category)
 
-        # Collect vision signal 
-        vision_signal = self._run_vision(image_path)
+        # Collect vision signal — runs on all provided images, picks best result
+        vision_signal = self._run_vision_multi(all_image_paths)
 
         # Hand everything to fusion 
         # fusion owns: weights, overrides, damage logic, verdict, evidence packaging.
@@ -273,7 +278,7 @@ class ScanOrchestrator:
     # Switching from mock to real requires only changing the payload - nothing else.
 
     def _run_ocr(self, image_path: str, damage_score: float) -> AgentSignal:
-        """Run OCR. Falls back to mock on any exception."""
+        """Run OCR on a single image. Falls back to mock on any exception."""
         try:
             from ocr_linguistic.pipeline import run_pipeline as ocr_run_pipeline
 
@@ -296,6 +301,60 @@ class ScanOrchestrator:
         except Exception:
             logger.warning("OCR failed - using mock signal.", exc_info=True)
             return self._mock_ocr_signal()
+
+    def _run_ocr_multi(self, image_paths: list, damage_score: float) -> AgentSignal:
+        """
+        Run OCR on all provided images and merge results.
+
+        Merge strategy:
+        - Prefer the result that has a NAFDAC number extracted.
+        - Among candidates with equal NAFDAC presence, prefer lower anomaly score
+          (cleaner image → more trustworthy reading).
+        Falls back to mock if every image fails OCR.
+        """
+        try:
+            from ocr_linguistic.pipeline import run_pipeline as ocr_run_pipeline
+        except Exception:
+            logger.warning("OCR import failed - using mock signal.", exc_info=True)
+            return self._mock_ocr_signal()
+
+        results = []
+        for path in image_paths:
+            try:
+                logger.info("OCR | image=%s | damage_score=%s", path, damage_score)
+                r = ocr_run_pipeline(path, damage_score)
+                results.append(r)
+                logger.info(
+                    "OCR image done | nafdac=%s | anomaly=%.3f",
+                    r.get("metadata", {}).get("nafdac_number"),
+                    r.get("final_text_anomaly_score", 0.5),
+                )
+            except Exception:
+                logger.warning("OCR failed for %s - skipping.", path, exc_info=True)
+
+        if not results:
+            return self._mock_ocr_signal()
+
+        # Pick best result: NAFDAC number presence first, then lowest anomaly score
+        def _score(r):
+            has_nafdac = 1 if r.get("metadata", {}).get("nafdac_number") else 0
+            anomaly    = r.get("final_text_anomaly_score", 0.5)
+            return (has_nafdac, -anomaly)   # higher is better
+
+        best = max(results, key=_score)
+        logger.info(
+            "OCR multi complete | %d images | best nafdac=%s | anomaly=%.3f",
+            len(results),
+            best.get("metadata", {}).get("nafdac_number"),
+            best.get("final_text_anomaly_score", 0.5),
+        )
+        return AgentSignal(
+            agent_id   = "ocr",
+            available  = True,
+            confidence = 1.0 - best.get("final_text_anomaly_score", 0.5),
+            mocked     = False,
+            payload    = best,
+        )
 
     def _run_regulatory(self, nafdac_no: str, nafdac_category: str) -> AgentSignal:
         """
@@ -371,16 +430,13 @@ class ScanOrchestrator:
             )
 
     def _run_vision(self, image_path: str) -> AgentSignal:
-        """
-        Run Visual pipeline. Falls back to mock on any exception.
-        blur_value and damage_score in the payload drive visual's weight selection.
-        """
+        """Run Visual pipeline on a single image. Falls back to mock on any exception."""
         try:
             import sys, os
             sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'visual'))
-            from visual.vision_engine.pipeline.visual_pipeline import VisualPipeline
+            from vision_engine.pipeline.visual_pipeline import VisualPipeline
 
-            logger.info("A1 Vision | image=%s", image_path)
+            logger.info("Vision | image=%s", image_path)
             pipeline = VisualPipeline()
             result   = pipeline.analyze(image_path)
 
@@ -401,10 +457,59 @@ class ScanOrchestrator:
             )
 
         except Exception:
-            logger.warning("Vision faile, using mock signal.", exc_info=True)
+            logger.warning("Vision failed, using mock signal.", exc_info=True)
             return self._mock_vision_signal()
-        
-    
+
+    def _run_vision_multi(self, image_paths: list) -> AgentSignal:
+        """
+        Run Visual pipeline on all provided images and return the best result.
+
+        Best = highest confidence score. A real high-confidence result on any
+        image beats a low-confidence result on the primary image.
+        Falls back to mock if every image fails vision.
+        """
+        try:
+            import sys, os
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'visual'))
+            from vision_engine.pipeline.visual_pipeline import VisualPipeline
+        except Exception:
+            logger.warning("Vision import failed - using mock signal.", exc_info=True)
+            return self._mock_vision_signal()
+
+        pipeline = VisualPipeline()
+        best_result = None
+        best_confidence = -1.0
+
+        for path in image_paths:
+            try:
+                logger.info("Vision | image=%s", path)
+                result = pipeline.analyze(path)
+                conf   = result.get("confidence", 0.0)
+                logger.info(
+                    "Vision image done | product=%s | confidence=%.3f | verdict=%s",
+                    result.get("product"), conf, result.get("verdict"),
+                )
+                if conf > best_confidence:
+                    best_confidence = conf
+                    best_result = result
+            except Exception:
+                logger.warning("Vision failed for %s - skipping.", path, exc_info=True)
+
+        if best_result is None:
+            return self._mock_vision_signal()
+
+        logger.info(
+            "Vision multi complete | %d images | best confidence=%.3f",
+            len(image_paths), best_confidence,
+        )
+        return AgentSignal(
+            agent_id   = "vision",
+            available  = True,
+            confidence = best_confidence,
+            mocked     = False,
+            payload    = best_result,
+        )
+
     def _run_fusion(
         self,
         vision_signal:     AgentSignal,

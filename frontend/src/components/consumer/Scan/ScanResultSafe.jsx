@@ -10,35 +10,72 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
   const [scanData, setScanData] = useState(null);
 
   useEffect(() => {
-    // Get scan data from session storage
     const storedScan = sessionStorage.getItem('currentScan');
     let productImage = null;
-    let isAuthentic = true;
-    
+    let aiResult = null;
+    let scanLocation = '';
+    let scanLat = null;
+    let scanLng = null;
+
     if (storedScan) {
-      const parsed = JSON.parse(storedScan);
-      productImage = parsed.productImage;
-      isAuthentic = parsed.isAuthentic;
+      try {
+        const parsed = JSON.parse(storedScan);
+        productImage = parsed.productImage;
+        aiResult = parsed.aiResult || null;
+        scanLocation = parsed.location || '';
+        scanLat = parsed.latitude ?? null;
+        scanLng = parsed.longitude ?? null;
+      } catch {}
     }
 
-    const scanData = {
-      product: 'Nike Air Max 270',
-      productImage: productImage || getProductImage('Nike Air Max 270', 'Footwear'),
-      category: 'Footwear',
-      manufacturer: 'Nike Inc.',
-      nafdacNumber: 'B1-4022-XP',
-      batchNumber: 'BATCH-2024-001',
-      expiryDate: 'Oct 2026',
-      status: 'authentic',
-      similarity: 98,
-      location: 'Lagos Market',
+    // Extract fields from real AI result when available
+    const verdictRaw = aiResult?.final_verdict || 'AUTHENTIC';
+    const isSuspicious = verdictRaw === 'SUSPICIOUS';
+    const confidence = aiResult?.confidence_pct ?? aiResult?.confidence_score != null
+      ? Math.round((aiResult.confidence_score || 0) * 100)
+      : 92;
+
+    // Extract NAFDAC number from evidence package or breakdown
+    const evidence = aiResult?.evidence_package || {};
+    const regPayload = aiResult?.breakdown?.reg || {};
+    const nafdacNumber = evidence?.nafdac_number
+      || regPayload?.nafdac_number
+      || 'Extracted by AI';
+
+    const status = isSuspicious ? 'suspicious' : 'authentic';
+
+    const data = {
+      product: aiResult?.evidence_package?.product_name || 'Verified Product',
+      productImage: productImage || 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400',
+      category: aiResult?.evidence_package?.category || 'Consumer Goods',
+      manufacturer: aiResult?.evidence_package?.manufacturer || 'Registered Manufacturer',
+      nafdacNumber,
+      batchNumber: aiResult?.evidence_package?.batch_number || 'AI-Verified',
+      expiryDate: aiResult?.evidence_package?.expiry_date || 'Valid',
+      status,
+      isSuspicious,
+      similarity: confidence,
+      confidence,
+      action: aiResult?.action || (isSuspicious ? 'CAUTION' : 'BUY'),
+      instruction: aiResult?.simple_instruction || (
+        isSuspicious
+          ? 'This product shows some irregularities. Proceed with caution.'
+          : 'This product appears authentic. Safe to purchase.'
+      ),
+      summary: aiResult?.summary || '',
+      detail: aiResult?.detail || '',
+      warnings: aiResult?.warnings || [],
+      signalsUsed: aiResult?.signals_used || [],
+      location: scanLocation || (scanLat && scanLng ? `${scanLat.toFixed(4)}° N, ${scanLng.toFixed(4)}° E` : 'Location unavailable'),
+      latitude: scanLat,
+      longitude: scanLng,
       time: 'Today, ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       verified: true,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
-    
-    setScanData(scanData);
-    saveScanToHistory(scanData);
+
+    setScanData(data);
+    saveScanToHistory(data);
   }, []);
 
   if (!scanData) {
@@ -61,15 +98,20 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
 
       {/* Result Card */}
       <Card className="mb-6 border-2 border-success/20 overflow-hidden">
-        {/* Success Banner */}
-        <div className="bg-success/5 p-6 text-center border-b border-success/10">
-          <div className="w-20 h-20 bg-success/10 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Icon name="CheckCircle" size={40} className="text-success" library="fi" />
+        {/* Success / Caution Banner */}
+        <div className={`p-6 text-center border-b ${scanData.isSuspicious ? 'bg-yellow-50 border-yellow-100' : 'bg-success/5 border-success/10'}`}>
+          <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 ${scanData.isSuspicious ? 'bg-yellow-100' : 'bg-success/10'}`}>
+            <Icon name={scanData.isSuspicious ? 'AlertTriangle' : 'CheckCircle'} size={40} className={scanData.isSuspicious ? 'text-yellow-600' : 'text-success'} library="fi" />
           </div>
-          <h1 className="text-3xl font-bold text-success mb-2">SAFE TO BUY</h1>
-          <p className="text-gray-600">
-            This item has been verified against the official database and matches all safety records.
-          </p>
+          <h1 className={`text-3xl font-bold mb-2 ${scanData.isSuspicious ? 'text-yellow-700' : 'text-success'}`}>
+            {scanData.isSuspicious ? 'PROCEED WITH CAUTION' : 'SAFE TO BUY'}
+          </h1>
+          <p className="text-gray-600 text-sm">{scanData.instruction}</p>
+          {scanData.isSuspicious && (
+            <div className="mt-3 inline-block bg-yellow-100 text-yellow-800 text-xs font-medium px-3 py-1 rounded-full">
+              AI Confidence: {scanData.confidence}%
+            </div>
+          )}
         </div>
 
         {/* Product Image */}
@@ -159,30 +201,63 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
           </div>
 
           {/* AI Confidence Score */}
-          <div className="bg-primary/5 p-3 rounded-xl">
+          <div className={`p-3 rounded-xl ${scanData.isSuspicious ? 'bg-yellow-50' : 'bg-primary/5'}`}>
             <div className="flex justify-between items-center mb-2">
-              <span className="text-sm font-medium text-primary">AI Confidence Score</span>
-              <span className="text-sm font-bold text-primary">{scanData.similarity}%</span>
+              <span className={`text-sm font-medium ${scanData.isSuspicious ? 'text-yellow-700' : 'text-primary'}`}>AI Confidence Score</span>
+              <span className={`text-sm font-bold ${scanData.isSuspicious ? 'text-yellow-700' : 'text-primary'}`}>{scanData.similarity}%</span>
             </div>
-            <div className="h-2 bg-primary/10 rounded-full overflow-hidden">
-              <div className="w-[98%] h-full bg-primary rounded-full" style={{ width: `${scanData.similarity}%` }} />
+            <div className={`h-2 rounded-full overflow-hidden ${scanData.isSuspicious ? 'bg-yellow-200' : 'bg-primary/10'}`}>
+              <div
+                className={`h-full rounded-full ${scanData.isSuspicious ? 'bg-yellow-500' : 'bg-primary'}`}
+                style={{ width: `${scanData.similarity}%` }}
+              />
             </div>
           </div>
 
+          {/* AI Summary */}
+          {scanData.summary && (
+            <div className="bg-gray-50 p-3 rounded-xl">
+              <p className="text-xs text-gray-500 mb-1">AI Analysis Summary</p>
+              <p className="text-sm text-gray-700">{scanData.summary}</p>
+            </div>
+          )}
+
+          {/* Warnings */}
+          {scanData.warnings?.length > 0 && (
+            <div className="bg-yellow-50 p-3 rounded-xl">
+              <p className="text-xs font-medium text-yellow-700 mb-2">Warnings</p>
+              {scanData.warnings.map((w, i) => (
+                <p key={i} className="text-xs text-yellow-600">• {w?.message || w?.type || String(w)}</p>
+              ))}
+            </div>
+          )}
+
           {/* Quality Seals */}
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs bg-success/10 text-success px-3 py-1 rounded-full flex items-center gap-1">
-              <Icon name="Check" size={12} className="text-success" library="fi" />
-              NAFDAC Registered
-            </span>
-            <span className="text-xs bg-success/10 text-success px-3 py-1 rounded-full flex items-center gap-1">
-              <Icon name="Check" size={12} className="text-success" library="fi" />
-              Quality Assured
-            </span>
-            <span className="text-xs bg-success/10 text-success px-3 py-1 rounded-full flex items-center gap-1">
-              <Icon name="Check" size={12} className="text-success" library="fi" />
-              Batch Verified
-            </span>
+            {scanData.signalsUsed?.includes('reg') && (
+              <span className="text-xs bg-success/10 text-success px-3 py-1 rounded-full flex items-center gap-1">
+                <Icon name="Check" size={12} className="text-success" library="fi" />
+                NAFDAC Verified
+              </span>
+            )}
+            {scanData.signalsUsed?.includes('visual') && (
+              <span className="text-xs bg-success/10 text-success px-3 py-1 rounded-full flex items-center gap-1">
+                <Icon name="Check" size={12} className="text-success" library="fi" />
+                Visual Match
+              </span>
+            )}
+            {scanData.signalsUsed?.includes('ocr') && (
+              <span className="text-xs bg-success/10 text-success px-3 py-1 rounded-full flex items-center gap-1">
+                <Icon name="Check" size={12} className="text-success" library="fi" />
+                OCR Verified
+              </span>
+            )}
+            {!scanData.signalsUsed?.length && (
+              <span className="text-xs bg-success/10 text-success px-3 py-1 rounded-full flex items-center gap-1">
+                <Icon name="Check" size={12} className="text-success" library="fi" />
+                AI Verified
+              </span>
+            )}
           </div>
         </div>
 

@@ -1,4 +1,5 @@
 .env
+backend/.env
 a_venv
 __pycache__/
 *.pyc
@@ -6,3 +7,12 @@ __pycache__/
 *.pyd
 chroma_db
 ai_engine\visual\test_images\Product_images_labeled
+
+# Virtual environments
+venv/
+venv310/
+venv311/
+venv312/
+.venv/
+env/
+ENV/

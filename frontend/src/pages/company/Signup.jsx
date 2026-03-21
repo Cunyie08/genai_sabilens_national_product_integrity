@@ -4,6 +4,7 @@ import Icon from '../../components/common/Icon';
 import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
+import { authApi } from '../../services/api';
 
 // Nigeria states data
 const NIGERIA_STATES = [
@@ -175,7 +176,9 @@ const CompanySignup = () => {
     setTouched(prev => ({ ...prev, city: true }));
   };
 
-  const handleSubmit = (e) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     const requiredFields = ['companyName', 'registrationNumber', 'email', 'phone', 'address', 'state', 'city', 'password', 'confirmPassword'];
@@ -184,63 +187,46 @@ const CompanySignup = () => {
 
     if (!isFormValid()) return;
 
-    // Get existing companies and users
-    const companies = JSON.parse(localStorage.getItem('companies') || '[]');
-    const users = JSON.parse(localStorage.getItem('users') || '[]');
+    setIsSubmitting(true);
+    try {
+      const response = await authApi.register({
+        email: formData.email,
+        phone: `+234${formData.phone}`,
+        password: formData.password,
+        first_name: 'Admin',
+        last_name: formData.companyName,
+        role: 'company_admin',
+      });
+      const { user, tokens } = response.data;
 
-    // Check if email exists
-    const existingUser = users.find(u => u.email === formData.email);
-    if (existingUser) {
+      localStorage.setItem('accessToken', tokens.access_token);
+      localStorage.setItem('refreshToken', tokens.refresh_token);
+      localStorage.setItem('currentUser', JSON.stringify({
+        id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role,
+      }));
+
       setModalConfig({
-        type: 'error',
-        title: 'Email Exists',
-        message: 'This email is already registered. Please use a different email or login.'
+        type: 'success',
+        title: 'Registration Successful!',
+        message: `Welcome ${formData.companyName}! Your company account has been created. Please login to continue.`
       });
       setModalOpen(true);
-      return;
+    } catch (error) {
+      const msg = error.message || 'Registration failed. Please try again.';
+      const isEmailTaken = msg.toLowerCase().includes('already exists') || msg.toLowerCase().includes('already registered');
+      setModalConfig({
+        type: 'error',
+        title: 'Registration Failed',
+        message: isEmailTaken ? 'This email is already registered. Please use a different email or login.' : msg
+      });
+      setModalOpen(true);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    // Create company record
-    const companyId = `comp_${Date.now()}`;
-    const newCompany = {
-      id: companyId,
-      name: formData.companyName,
-      registrationNumber: formData.registrationNumber,
-      email: formData.email,
-      phone: `+234${formData.phone}`,
-      address: formData.address,
-      city: formData.city,
-      state: formData.state,
-      status: 'active',
-      createdAt: new Date().toISOString()
-    };
-
-    companies.push(newCompany);
-
-    // Create admin user for company
-    const newUser = {
-      id: `user_${Date.now()}`,
-      email: formData.email,
-      password: formData.password,
-      firstName: 'Admin',
-      lastName: formData.companyName,
-      role: 'company_admin',
-      companyId: companyId,
-      status: 'active',
-      createdAt: new Date().toISOString()
-    };
-
-    users.push(newUser);
-
-    localStorage.setItem('companies', JSON.stringify(companies));
-    localStorage.setItem('users', JSON.stringify(users));
-
-    setModalConfig({
-      type: 'success',
-      title: 'Registration Successful!',
-      message: `Welcome ${formData.companyName}! Your company account has been created successfully. Please login to continue.`
-    });
-    setModalOpen(true);
   };
 
   const handleModalClose = () => {
@@ -612,9 +598,9 @@ const CompanySignup = () => {
               type="submit"
               variant="primary"
               fullWidth
-              disabled={!isFormValid()}
+              disabled={!isFormValid() || isSubmitting}
             >
-              Register Company
+              {isSubmitting ? 'Registering...' : 'Register Company'}
             </Button>
           </form>
         </Card>

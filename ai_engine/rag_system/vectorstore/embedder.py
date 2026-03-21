@@ -56,7 +56,7 @@ class Embedder:
         print(f"[Embedder] Loading model: {settings.EMBEDDING_MODEL}")
         self.model = SentenceTransformer(settings.EMBEDDING_MODEL)
         self.dimension: int = self.model.get_sentence_embedding_dimension()
-        print(f"[Embedder] ✅  Model ready  — embedding dimension: {self.dimension}")
+        print(f"[Embedder] Model ready - embedding dimension: {self.dimension}")
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """
