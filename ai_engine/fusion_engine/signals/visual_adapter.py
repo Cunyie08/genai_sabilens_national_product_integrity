@@ -9,10 +9,10 @@ standard FusionSignal that Fusion engine can consume directly.
 Visual OUTPUT CONTRACT (visual_pipeline.py):
   {
       "product":           str,    # Best matched product name from embedding store
-      "Visual Similarity": float,  # 0.0–1.0 raw cosine similarity (pre-damage)
+      "Visual Similarity": float,  # 0.0-1.0 raw cosine similarity (pre-damage)
       "damage_score":      float,  # 0.1=sharp | 0.4=moderate | 0.8=heavy blur
-      "blur_value":        float,  # Raw Laplacian variance — from DamageDetector
-      "confidence":        float,  # 0.0–1.0 = similarity * (1 - damage_score)
+      "blur_value":        float,  # Raw Laplacian variance - from DamageDetector
+      "confidence":        float,  # 0.0-1.0 = similarity * (1 - damage_score)
       "verdict":           str,    # "Authentic" | "Suspicious" | "Fake"
   }
 
@@ -43,7 +43,7 @@ BACKWARD COMPATIBILITY:
 
 SCALABILITY NOTES:
   - Add new override conditions here as new threat patterns are identified.
-  - Do not add scoring logic — scoring belongs in fusion_engine.py.
+  - Do not add scoring logic - scoring belongs in fusion_engine.py.
   - If A1 adds new output fields, extend this adapter and update schema.py.
 """
 
