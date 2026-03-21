@@ -12,14 +12,14 @@ SCORE SCALE: 0.0 - 1.0 (aligned to orchestrator/pipeline.py)
 VERDICT BANDS:
   ┌─────────────────────────────────────────────────────┐
   │  >= 0.72  ->  AUTHENTIC         Safe to purchase    │
-  │  0.45-0.74 ->  SUSPICIOUS       Proceed with caution│
+  │  0.45-0.71 ->  SUSPICIOUS       Proceed with caution│
   │  < 0.45   ->  FAKE              Do not buy. Report. │
   └─────────────────────────────────────────────────────┘
 
 HARD OVERRIDE RULES (bypass score entirely — set in reg_adapter / ocr_adapter):
   Regulatory status in {NOT_FOUND, SUBCATEGORY_MISMATCH, AGENT_ERROR} ->    force FAKE
-  OCR nafdac_number = None                                      -> floor SUSPICIOUS
-  visual_similarity < 0.20                                      ->floor SUSPICIOUS
+  OCR nafdac_number = None                                      ->  floor SUSPICIOUS
+  visual_similarity < 0.20                                      ->  floor SUSPICIOUS
 
 DAMAGE IS NOT AN OVERRIDE:
   damage_score and blur_value affect WEIGHTS only — never verdict directly.
