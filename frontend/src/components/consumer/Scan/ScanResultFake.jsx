@@ -23,7 +23,7 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
     if (storedScan) {
       try {
         const parsed = JSON.parse(storedScan);
-        productImage = parsed.productImage;
+        productImage = parsed.imageUrl || parsed.productImage;
         aiResult = parsed.aiResult || null;
         scanLocation = parsed.location || '';
         scanLat = parsed.latitude ?? null;
@@ -52,7 +52,7 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
       manufacturer: 'Unknown / Unregistered',
       nafdacNumber: 'Not Found',
       batchNumber: 'Invalid',
-      status: aiResult?.final_verdict || aiResult?.verdict || 'FAKE',
+      status: 'fake',
       similarity: confidence,
       confidence,
       severity: aiResult?.severity || 'CRITICAL',

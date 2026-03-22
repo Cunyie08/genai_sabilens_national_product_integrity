@@ -57,7 +57,7 @@ export const saveScanToHistory = (scanData) => {
   const newScan = {
     id: `scan_${Date.now()}`,
     ...scanData,
-    productImage: scanData.capturedImage || productImage, // Use captured image if available, otherwise default
+    productImage: scanData.productImage || scanData.capturedImage || productImage, // Prefer Cloudinary URL, then captured, then category fallback
     timestamp: new Date().toISOString(),
     userPhone: currentUser.phone
   };
@@ -205,7 +205,7 @@ export const generateMockScan = (isAuthentic = true) => {
     category: randomProduct.category,
     manufacturer: randomProduct.manufacturer,
     nafdacNumber: randomProduct.nafdac,
-    status: isAuthentic ? 'authentic' : (Math.random() > 0.5 ? 'caution' : 'fake'),
+    status: isAuthentic ? 'authentic' : (Math.random() > 0.5 ? 'suspicious' : 'fake'),
     time: randomDay === 'Today' ? `Today, ${timeString}` : randomDay === 'Yesterday' ? `Yesterday, ${timeString}` : `${randomDay}, ${timeString}`,
     verified: isAuthentic ? true : Math.random() > 0.7,
     similarity: isAuthentic ? Math.floor(Math.random() * 20) + 80 : Math.floor(Math.random() * 50) + 30,

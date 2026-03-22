@@ -1,4 +1,4 @@
-from backend.ocr_linguistic.brand_validator import BrandValidator
+from ai_engine.ocr_linguistic.brand_validator import BrandValidator
 
 validator = BrandValidator()
 

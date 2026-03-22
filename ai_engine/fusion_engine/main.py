@@ -77,9 +77,9 @@ _FAILSAFE_OCR = {
 _FAILSAFE_REG = {
     "verified":           False,
     "verification_score": 0.0,
-    "status_code":        "NOT_FOUND",  # Triggers HARD_FAKE override in fusion_engine
+    "status_code":        "AGENT_ERROR",  # Triggers HARD_FAKE override in fusion_engine
     "severity":           "CRITICAL",
-    "summary":            "Signal unavailable - treated as NOT_FOUND.",
+    "summary":            "Signal unavailable - regulatory agent error.",
     "detail":             "Regulatory signal could not be retrieved. System fails closed.",
     "expiry_check":       None,
     "alignment":          None,

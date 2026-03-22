@@ -36,8 +36,15 @@ RETRIEVAL CONFIDENCE DERIVATION (used in warnings and audit):
   agent_error       -> 0.0
 
 HARD FAKE OVERRIDES:
-  NOT_FOUND          - NAFDAC number absent from registered product database
   AGENT_ERROR        - ReAct agent crashed; cannot confirm authenticity
+  EXPIRED            - product registration has lapsed
+
+DB GAP (soft — does NOT force FAKE):
+  NOT_FOUND          - NAFDAC number absent from our current regulatory database.
+    Our database only covers a subset of registered products. A missing number is a
+    coverage gap, not a confirmed counterfeit. Verdict falls through to visual + OCR.
+    reg_score=0.0 and FALLBACK weights ensure the regulatory signal contributes nothing
+    while still allowing an AUTHENTIC verdict if visual and OCR signals are strong.
 
 SOFT WARNING (product IS registered, but category hint from client was wrong/missing):
   SUBCATEGORY_MISMATCH - NAFDAC number found but scanned_category != registered category.
@@ -70,8 +77,12 @@ VALID_STATUS_CODES = {
     "AGENT_ERROR",          # ReAct agent only - not in legacy regulatory_scorer
 }
 
-# Status codes that force FAKE - aligned to orchestrator CRITICAL_STATUSES
-CRITICAL_STATUSES = {"NOT_FOUND", "AGENT_ERROR", "EXPIRED"}
+# Status codes that force FAKE - reg signal was definitive evidence of a problem
+CRITICAL_STATUSES = {"AGENT_ERROR", "EXPIRED"}
+
+# DB coverage gap - product not in our (still-growing) database.
+# Does NOT force FAKE. reg_score stays 0.0; FALLBACK weights let visual+OCR decide.
+DB_GAP_STATUSES = {"NOT_FOUND"}
 
 # These reduce the reg score but do NOT force FAKE - product was found
 # Product was found but something is off. No override fired. Fusion scores
@@ -81,11 +92,6 @@ SOFT_WARNING_STATUSES = {"SUBCATEGORY_MISMATCH"}
 
 # Override reason strings - forwarded to evidence and audit panel
 _OVERRIDE_REASONS = {
-    "NOT_FOUND": (
-        "REG: NAFDAC number does not exist in the registered product database. "
-        "Definitive counterfeit signal. Verdict forced to FAKE."
-    ),
-
     "AGENT_ERROR": (
         "Regulatory ReAct Agent encountered an unrecoverable error during verification. "
         "Cannot confirm authenticity. System fails closed. Verdict forced to FAKE."
@@ -94,6 +100,16 @@ _OVERRIDE_REASONS = {
         "REG: NAFDAC registration for this product has expired. "
         "Product may be old stock, repackaged, or counterfeit. "
         "Verdict forced to FAKE."
+    ),
+}
+
+# DB gap warning - product not found because our DB is incomplete, not because it's fake
+_DB_GAP_WARNINGS = {
+    "NOT_FOUND": (
+        "REG: NAFDAC number not found in our regulatory database. "
+        "Our database is still growing and may not cover all registered products. "
+        "This is treated as a database coverage gap, not a counterfeit signal. "
+        "Verdict is determined by visual and OCR signals only."
     ),
 }
 
@@ -178,6 +194,13 @@ def adapt(reg_output: dict) -> dict:
             status_code,
             f"Regulatory critical status '{status_code}' - verdict forced to FAKE."
         )
+
+    elif status_code in DB_GAP_STATUSES:
+        # DB coverage gap: no override. reg_score stays 0.0.
+        # fallback_used=True (set by reasoning_engine) ensures FALLBACK weights are chosen,
+        # so visual + OCR determine the verdict without any reg contribution.
+        override_flag = False
+        soft_warning  = _DB_GAP_WARNINGS.get(status_code)
 
     elif status_code in _SOFT_WARNING_REASONS:
         override_flag = False
