@@ -10,8 +10,19 @@ NAFDAC FALLBACK STRATEGY:
   NAFDAC numbers on Nigerian product labels almost always appear in the
   bottom section in small print. Upscaling that region 2x gives the OCR
   engine a much better chance of reading it.
-"""
 
+
+
+IMAGE FORMAT HANDLING:
+  Mobile apps often send PNG images with an alpha channel (RGBA / 4-channel).
+  EasyOCR's internal greyscale conversion does:
+      maximum_y, maximum_x = img.shape   # fails for 3-channel arrays
+  which raises ValueError: too many values to unpack.
+  All image loading in this module goes through _load_bgr() which safely
+  strips the alpha channel before passing the image to EasyOCR.
+"""
+import os
+import tempfile
 import cv2
 import numpy as np
 import easyocr
@@ -34,6 +45,37 @@ def get_ocr_engine():
         _ocr_engine = easyocr.Reader(['en'], gpu=False, verbose=False)
     return _ocr_engine
 
+# ==============================================================
+# IMAGE LOADING HELPER
+# ==============================================================
+
+def _load_bgr(image_path: str) -> np.ndarray:
+    """
+    Load an image from disk as a 3-channel BGR array, safe for EasyOCR.
+
+    Handles:
+      - JPEG / JPG   : already 3-channel, no conversion needed
+      - PNG (RGB)    : 3-channel, no conversion needed
+      - PNG (RGBA)   : 4-channel — alpha stripped → 3-channel BGR
+      - Greyscale    : 1-channel — promoted to 3-channel BGR
+
+    Raises:
+        ValueError: if the file cannot be read by OpenCV.
+    """
+    img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+
+    if img is None:
+        raise ValueError(f"Could not load image: {image_path}")
+
+    # RGBA (4-channel) → BGR (3-channel): drop the alpha channel
+    if img.ndim == 3 and img.shape[2] == 4:
+        img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+
+    # Greyscale (1-channel) → BGR (3-channel): replicate across channels
+    elif img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
+    return img
 
 
 
@@ -55,29 +97,25 @@ def extract_text_blocks(image_path: str) -> list[dict]:
           - 'text': the detected string
           - 'confidence': float 0.0-1.0
     """
+
+    
     ocr_engine = get_ocr_engine()
 
-    # Primary pass: full image
-    results = ocr_engine.readtext(image_path)
-    blocks  = _parse_ocr_results(results)
-
-    # Check if NAFDAC was found
+    # Primary pass: full image - pass numpy array directly, no temp file
+    img = _load_bgr(image_path)
+    results = ocr_engine.readtext(img)   # EasyOCR accepts numpy arrays directly
+    blocks    = _parse_ocr_results(results)
     full_text = " ".join(b["text"] for b in blocks)
     nafdac    = extract_nafdac_number(full_text)
 
     if nafdac:
         return blocks
 
-    # Fallback pass: bottom 25% crop + 2x upscale
-    # NAFDAC numbers are printed in small text at the bottom of Nigerian labels.
-    # Upscaling the crop 2x before OCR significantly improves detection rate.
-    bottom_crop = _crop_bottom(image_path, fraction=0.30, upscale=2.0)
-
+    # Fallback pass: bottom 30% crop
+    bottom_crop = _crop_bottom(img, fraction=0.30, upscale=2.0)
     if bottom_crop is not None:
         fallback_results = ocr_engine.readtext(bottom_crop)
         fallback_blocks  = _parse_ocr_results(fallback_results)
-
-        # Merge fallback blocks — deduplicate by text content
         existing_texts = {b["text"] for b in blocks}
         for fb in fallback_blocks:
             if fb["text"] not in existing_texts:
@@ -100,7 +138,7 @@ def _parse_ocr_results(results) -> list:
             blocks.append({"text": text, "confidence": confidence})
     return blocks
 
-def _crop_bottom(image_path: str, fraction: float = 0.30, upscale: float = 2.0):
+def _crop_bottom(img: np.ndarray, fraction: float = 0.30, upscale: float = 2.0):
     """
     Crop the bottom `fraction` of the image and upscale it.
 
@@ -110,18 +148,17 @@ def _crop_bottom(image_path: str, fraction: float = 0.30, upscale: float = 2.0):
         upscale:    Scale factor for upscaling the crop.
 
     Returns:
-        Upscaled numpy array ready for EasyOCR, or None if image can't be read.
+        Upscaled BGR numpy array ready for EasyOCR, or None if img is invalid.
     """
-    img = cv2.imread(image_path)
-    if img is None:
+    if img is None or img.size == 0:
         return None
 
-    h, w = img.shape[:2]
-    y1   = int(h * (1.0 - fraction))
-    crop = img[y1:h, 0:w]
+    h, w  = img.shape[:2]
+    y1    = int(h * (1.0 - fraction))
+    crop  = img[y1:h, 0:w]
 
-    new_h = int(crop.shape[0] * upscale)
-    new_w = int(crop.shape[1] * upscale)
+    new_h    = int(crop.shape[0] * upscale)
+    new_w    = int(crop.shape[1] * upscale)
     upscaled = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
 
     return upscaled
