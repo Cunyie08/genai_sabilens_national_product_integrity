@@ -38,7 +38,7 @@ ERROR HANDLING STRATEGY:
 
 import traceback
 from datetime import datetime, timezone
-
+import uuid
 from ai_engine.fusion_engine.signals.visual_adapter   import adapt as visual_adapt,  validate as visual_validate
 from ai_engine.fusion_engine.signals.ocr_adapter      import adapt as ocr_adapt,     validate as ocr_validate
 from ai_engine.fusion_engine.signals.reg_adapter      import adapt as reg_adapt,     validate as reg_validate
@@ -47,7 +47,7 @@ from ai_engine.fusion_engine.core.decision_classifier import classify
 from ai_engine.fusion_engine.core.evidence_packager   import package
 from ai_engine.fusion_engine.utils.logger             import setup_logger
 
-logger = setup_logger("A4_FusionEngine")
+logger = setup_logger("FusionEngine")
 
 
 # Fail-safe signal defaults 
@@ -173,7 +173,7 @@ def run_scan(
         logger.info("Running decision classifier...")
         classification = classify(fusion_result)
 
-        scan_id = classification.get("scan_id", "UNKNOWN")
+        scan_id = classification.get("scan_id", str(uuid.uuid4())) # Generate scan_id if classifier fails to return one
         verdict = classification.get("verdict", "FAKE")
 
         logger.info(
@@ -316,7 +316,7 @@ def _rescan_result(fusion_result: dict, timestamp: str, errors: list) -> dict:
 
     return {
         "status":             "RESCAN_REQUIRED",
-        "scan_id":            "RESCAN",
+        "scan_id":            str(uuid.uuid4()),
         "verdict":            "RESCAN_REQUIRED",
         "action":             "RESCAN",
         "final_score":        None,
@@ -358,7 +358,7 @@ def _failsafe_result(timestamp: str) -> dict:
     """
     return {
         "status":             "FAILSAFE",
-        "scan_id":            "FAILSAFE",
+        "scan_id":            str(uuid.uuid4()),
         "verdict":            "FAKE",
         "action":             "DO NOT BUY",
         "final_score":        0.0,

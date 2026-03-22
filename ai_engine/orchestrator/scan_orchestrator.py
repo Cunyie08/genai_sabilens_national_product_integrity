@@ -3,7 +3,7 @@
 Coordinates Vision, OCR, Regulatory, and Fusion
 for every product label scan in SabiLens.
 
-D1 Backend creates one ScanOrchestrator instance at startup and calls scan() per request.
+Backend creates one ScanOrchestrator instance at startup and calls scan() per request.
 
 RESPONSIBILITY OF THIS FILE:
   Collect signals from Visual, OCR, Regulatory and hand them to Fusion.
@@ -40,6 +40,15 @@ SUBCATEGORY MAPPING:
   product-level descriptions to NAFDAC category strings via NAFDAC_CATEGORY_MAP
   before calling regulatory. If no mapping exists, the raw string is passed through and
   Regulatory(RAG)'s fallback semantic search handles it.
+
+CATEGORY FALLBACK CHAIN (when frontend sends category="unknown"):
+    1. Use scanned_category from frontend if it maps to a known NAFDAC category.
+    2. If scanned_category is "unknown" or unmapped, try OCR's detected brand name
+        (e.g. "Vaseline" -> maps to "Cosmetics").
+    3. If brand is also unknown, pass "unknown" through to regulatory — the agent
+        will attempt semantic resolution and return SUBCATEGORY_MISMATCH (soft warning,
+        not a hard FAKE override).
+
 
 Usage:
     orchestrator = ScanOrchestrator()                        # once at startup; loads ChromaDB + models
@@ -107,6 +116,7 @@ NAFDAC_CATEGORY_MAP: dict = {
     "spice":                    "Condiments/Spices/Seasonings",
     # Beverages
     "tea":                      "Non-Alcoholic Beverages",
+    "lipton":                   "Non-Alcoholic Beverages",
     "juice":                    "Non-Alcoholic Beverages",
     "water":                    "Non-Alcoholic Beverages",
     # Cosmetics & personal care
@@ -122,6 +132,11 @@ NAFDAC_CATEGORY_MAP: dict = {
     "cream":                    "Cosmetics",
     "soap":                     "Cosmetics",
     "gel":                      "Cosmetics",
+    # Common brand names (fallback when frontend sends brand instead of category)
+    "kellogg":                  "Cereals and Cereal Products",
+    "indomie":                  "Cereal Products",
+    "golden terra":             "Edible Oils and Fats",
+    "unilever":                 "Cosmetics",
 }
 
 
@@ -139,6 +154,9 @@ def _map_to_nafdac_category(scanned_category: str) -> str:
     Returns:
         NAFDAC registered category string, or scanned_category if unmapped.
     """
+    if not scanned_category or scanned_category.strip().lower() in ("", "unknown"):
+        return "unknown"
+
     lower = scanned_category.lower().strip()
     for keyword, nafdac_cat in NAFDAC_CATEGORY_MAP.items():
         if keyword in lower:
@@ -155,7 +173,61 @@ def _map_to_nafdac_category(scanned_category: str) -> str:
     )
     return scanned_category
 
+def _resolve_category(scanned_category: str, ocr_signal: AgentSignal) -> str:
+    """
+    Resolve the best available category hint to pass to regulatory.
 
+    Fallback chain:
+      1. Use scanned_category from frontend if it maps to a known NAFDAC category.
+      2. If unknown/unmapped, try OCR's detected brand name.
+      3. If brand also unknown, return "unknown" - regulatory will soft-warn only
+         (SUBCATEGORY_MISMATCH no longer hard-forces FAKE).
+
+    Args:
+        scanned_category: Category string from the consumer app request.
+        ocr_signal:       OCR AgentSignal; may contain brand_detected in payload.
+
+    Returns:
+        Best available NAFDAC category string.
+    """
+    # Try the frontend-provided category
+    mapped = _map_to_nafdac_category(scanned_category)
+    if mapped and mapped.lower() != "unknown":
+        return mapped
+
+    # Fall back to OCR-detected brand name
+    brand = (
+        ocr_signal.payload
+        .get("brand_anomaly", {})
+        .get("brand_detected")
+        or ocr_signal.payload
+        .get("metadata", {})
+        .get("brand_detected")
+    )
+
+    if brand:
+        brand_mapped = _map_to_nafdac_category(brand)
+        if brand_mapped.lower() != brand.lower():
+            # _map_to_nafdac_category returned a canonical category (not the raw brand)
+            logger.info(
+                "Category resolved from OCR brand: '%s' -> '%s'",
+                brand, brand_mapped,
+            )
+            return brand_mapped
+        # Brand didn't map to a known category — try it raw anyway
+        logger.info(
+            "Category fallback: using raw OCR brand '%s' (no canonical mapping found).",
+            brand,
+        )
+        return brand
+
+    # Step 3: nothing worked — pass unknown through; reg_adapter will soft-warn
+    logger.warning(
+        "Category could not be resolved from frontend ('%s') or OCR brand. "
+        "Passing 'unknown' to regulatory — expect SUBCATEGORY_MISMATCH soft warning.",
+        scanned_category,
+    )
+    return "unknown"
 
 class ScanOrchestrator:
     """
@@ -166,7 +238,7 @@ class ScanOrchestrator:
 
     def __init__(self):
 
-        logger.info("Initialising ScanOrchestrator - loading A3 agent...")
+        logger.info("Initialising ScanOrchestrator - loading REG agent...")
         self._regulatory_agent = NAFDACVerificationAgent()
         logger.info("ScanOrchestrator ready.")
 
@@ -221,8 +293,15 @@ class ScanOrchestrator:
             .get("nafdac_number") or ""
         )
 
+        # Resolve best category hint (frontend -> OCR brand -> unknown)
+        #    This prevents SUBCATEGORY_MISMATCH when frontend sends category="unknown"
+        nafdac_category = _resolve_category(scanned_category, ocr_signal)
+        logger.info(
+            "Category resolved | frontend='%s' -> regulatory='%s'",
+            scanned_category, nafdac_category,
+        )
+
         # Run regulatory ReAct agent
-        nafdac_category   = _map_to_nafdac_category(scanned_category)
         regulatory_signal = self._run_regulatory(effective_nafdac, nafdac_category)
 
         # Collect vision signal — runs on all provided images, picks best result
@@ -309,7 +388,7 @@ class ScanOrchestrator:
         Merge strategy:
         - Prefer the result that has a NAFDAC number extracted.
         - Among candidates with equal NAFDAC presence, prefer lower anomaly score
-          (cleaner image → more trustworthy reading).
+          (cleaner image to more trustworthy reading).
         Falls back to mock if every image fails OCR.
         """
         try:
@@ -623,7 +702,7 @@ class ScanOrchestrator:
     def explain(self, nafdac_no: str, scanned_category: str) -> str:
         """
         Run a full scan with mock visual/ocr (no image needed) and return a formatted
-        plain-text report. Useful for demos and the audit panel.
+        plain-text report. For demos and the auditing.
         """
         result = self.scan(
             image_path       = "EXPLAIN_MODE_NO_IMAGE",
@@ -704,7 +783,7 @@ if __name__ == "__main__":
 
     result = orchestrator.scan(
         image_path       = IMAGE,
-        nafdac_no        = "",           # let OCR extract it
+        nafdac_no        = "",           # OCR to extract
         scanned_category = "corn flakes",
         gps_coordinates  = {"lat": 6.5244, "lng": 3.3792, "accuracy": 8.5},
         purchase_channel = "open_market",

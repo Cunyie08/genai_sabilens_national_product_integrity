@@ -42,7 +42,9 @@ SCALABILITY NOTES:
     Format: first 12 hex chars of digest, uppercase, e.g. "A3F2B1C4D5E6"
 """
 
-import hashlib
+ 
+import uuid
+from datetime import datetime, timezone
 import json
 import uuid
 from datetime import datetime, timezone
@@ -179,11 +181,8 @@ def classify(fusion_result: dict) -> dict:
     # Generate deterministic scan_id 
     # SHA-256 over verdict + score + nafdac + UTC timestamp.
     # Deterministic within a single run; unique across runs due to timestamp.
-    scan_id = _generate_scan_id(
-        verdict       = verdict,
-        final_score   = final_score,
-        nafdac_number = evidence.get("nafdac_number", ""),
-    )
+    scan_id = str(uuid.uuid4())
+
 
     return {
         "action":             action,
@@ -302,21 +301,3 @@ def _inject_warnings(instruction: str, warnings: list) -> str:
     return result
 
 
-def _generate_scan_id(verdict: str, final_score: float, nafdac_number: str) -> str:
-    """
-    Generate a deterministic scan_id for this classification result.
-
-    Uses SHA-256 over: verdict + score + nafdac + UTC timestamp.
-    Returns the first 12 uppercase hex characters.
-    Format: "A3F2B1C4D5E6" - 12 chars, all uppercase hex.
-
-    The timestamp component ensures uniqueness across scans
-    even when verdict, score, and NAFDAC number are identical.
-    """
-    payload = json.dumps({
-        "verdict":  verdict,
-        "score":    final_score,
-        "nafdac":   nafdac_number,
-        "ts":       datetime.now(timezone.utc).isoformat(),
-    }, sort_keys=True)
-    return hashlib.sha256(payload.encode()).hexdigest()[:12].upper()
