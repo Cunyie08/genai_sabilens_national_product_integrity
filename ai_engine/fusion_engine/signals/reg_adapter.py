@@ -26,9 +26,9 @@ REG engine OUTPUT CONTRACT (regulatory_scorer.py):
   }
 
 RETRIEVAL PATH DERIVATION (from fallback_used and status_code):
-  fallback_used=False, no error  -> "nafdac_exact"     -> full A3 weight in fusion
-  fallback_used=True             -> "semantic_fallback" -> reduced A3 weight in fusion
-  status_code="AGENT_ERROR"      -> "agent_error"       -> A3 weight=0.0 + HARD_FAKE
+  fallback_used=False, no error  -> "nafdac_exact"     -> full reg weight in fusion
+  fallback_used=True             -> "semantic_fallback" -> reduced reg weight in fusion
+  status_code="AGENT_ERROR"      -> "agent_error"       -> reg weight=0.0 + HARD_FAKE
 
 RETRIEVAL CONFIDENCE DERIVATION (used in warnings and audit):
   nafdac_exact      -> 1.0  (deterministic DB lookup)
@@ -37,8 +37,15 @@ RETRIEVAL CONFIDENCE DERIVATION (used in warnings and audit):
 
 HARD FAKE OVERRIDES:
   NOT_FOUND          - NAFDAC number absent from registered product database
-  SUBCATEGORY_MISMATCH - NAFDAC number used on wrong product category
   AGENT_ERROR        - ReAct agent crashed; cannot confirm authenticity
+
+SOFT WARNING (product IS registered, but category hint from client was wrong/missing):
+  SUBCATEGORY_MISMATCH - NAFDAC number found but scanned_category != registered category.
+    This fires when the frontend sends category="unknown" or an incorrect category.
+    The product may still be authentic - fusion scores normally with a reduced reg score.
+    The consumer app should send a real category to avoid this warning.
+
+EXPIRED - product registration has lapsed; treated as hard FAKE.
 
 REASONING TRACE:
   Forwarded to evidence_packager for NAFDAC enforcement audit trail.
@@ -46,7 +53,7 @@ REASONING TRACE:
 
 SCALABILITY NOTES:
   - Add new status codes to VALID_STATUS_CODES and _OVERRIDE_REASONS as needed.
-  - Do not add scoring logic - scoring belongs in fusion_engine.py.
+  - No scoring logic added - scoring belongs in fusion_engine.py.
   - retrieval_path is the key signal fusion_engine uses for weight selection.
 """
 
@@ -64,7 +71,13 @@ VALID_STATUS_CODES = {
 }
 
 # Status codes that force FAKE - aligned to orchestrator CRITICAL_STATUSES
-CRITICAL_STATUSES = {"NOT_FOUND", "SUBCATEGORY_MISMATCH", "AGENT_ERROR", "EXPIRED"}
+CRITICAL_STATUSES = {"NOT_FOUND", "AGENT_ERROR", "EXPIRED"}
+
+# These reduce the reg score but do NOT force FAKE - product was found
+# Product was found but something is off. No override fired. Fusion scores
+# normally but reg_score is kept low (as set by verification_score from agent).
+# A SUBCATEGORY_MISMATCH warning is added to the warnings list for the consumer.
+SOFT_WARNING_STATUSES = {"SUBCATEGORY_MISMATCH"}
 
 # Override reason strings - forwarded to evidence and audit panel
 _OVERRIDE_REASONS = {
@@ -72,22 +85,29 @@ _OVERRIDE_REASONS = {
         "REG: NAFDAC number does not exist in the registered product database. "
         "Definitive counterfeit signal. Verdict forced to FAKE."
     ),
-    "SUBCATEGORY_MISMATCH": (
-        "REG: NAFDAC number is registered for a different product category. "
-        "Classic counterfeit pattern - reused registration number on wrong product. "
-        "Verdict forced to FAKE."
-    ),
+
     "AGENT_ERROR": (
         "Regulatory ReAct Agent encountered an unrecoverable error during verification. "
         "Cannot confirm authenticity. System fails closed. Verdict forced to FAKE."
     ),
-
     "EXPIRED": (
-    "REG: NAFDAC registration for this product has expired. "
-    "Product may be old stock, repackaged, or counterfeit. "
-    "Verdict forced to FAKE."
+        "REG: NAFDAC registration for this product has expired. "
+        "Product may be old stock, repackaged, or counterfeit. "
+        "Verdict forced to FAKE."
     ),
 }
+
+# Soft warning reason strings - added to warnings list, no override fired
+_SOFT_WARNING_REASONS = {
+    "SUBCATEGORY_MISMATCH": (
+        "REG: NAFDAC number is registered for a different product category. "
+        "The product IS registered but the category sent by the app did not match. "
+        "This is usually caused by the frontend sending category='unknown'. "
+        "Regulatory score reduced. Fusion will use visual and OCR signals to decide. "
+        "Ask the user to rescan and select the correct product category."
+    ),
+}
+
 
 # Retrieval path labels
 _PATH_EXACT    = "nafdac_exact"
@@ -150,6 +170,7 @@ def adapt(reg_output: dict) -> dict:
     #  Hard override logic
     override_flag   = False
     override_reason = None
+    soft_warning    = None
 
     if status_code in CRITICAL_STATUSES:
         override_flag   = True
@@ -157,6 +178,10 @@ def adapt(reg_output: dict) -> dict:
             status_code,
             f"Regulatory critical status '{status_code}' - verdict forced to FAKE."
         )
+
+    elif status_code in _SOFT_WARNING_REASONS:
+        override_flag = False
+        soft_warning = _SOFT_WARNING_REASONS.get(status_code)
 
     return {
         #  Core signal 
@@ -189,6 +214,9 @@ def adapt(reg_output: dict) -> dict:
         #  Override 
         "override_flag":   override_flag,
         "override_reason": override_reason,
+
+        # Soft warning forwarded into fusion's warnings list
+        "soft_warning": soft_warning,
 
         #  Audit trail (forwarded to evidence_packager → NAFDAC enforcement) 
         "reasoning_trace": reasoning_trace,
