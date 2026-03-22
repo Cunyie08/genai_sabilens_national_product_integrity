@@ -37,6 +37,7 @@ def make_entry(**kwargs) -> NAFDACEntry:
         product_name       = "KELLOGG'S CORN FLAKES",
         product_name_upper = "KELLOGG'S CORN FLAKES",
         subcategory        = "Cereals and Cereal Products",
+        subcategory_lower  = "cereals and cereal products",
         presentation       = "300G HARDBOARD PACK",
         applicant_name     = "KELLOGG TOLARAM NIGERIA LIMTED",
         country            = "Nigeria",
@@ -57,7 +58,8 @@ COCO_POPS   = make_entry(
 LIPTON      = make_entry(
     nafdac_no="01-0132", nafdac_no_clean="01-0132",
     product_name="LIPTON YELLOW LABEL TEA", product_name_upper="LIPTON YELLOW LABEL TEA",
-    subcategory="Beverages", presentation="25 x 2.0g in Hard board pack",
+    subcategory="Beverages", subcategory_lower="beverages",
+    presentation="25 x 2.0g in Hard board pack",
     applicant_name="UNILEVER NIGERIA PLC", manufacturer="UNILEVER NIG. PLC",
     expiry_date_iso="2026-03-28",
 )
@@ -65,7 +67,7 @@ VASELINE    = make_entry(
     nafdac_no="02-0385", nafdac_no_clean="02-0385",
     product_name="Vaseline blueseal pure petroleum jelly original",
     product_name_upper="VASELINE BLUESEAL PURE PETROLEUM JELLY ORIGINAL",
-    subcategory="Cosmetics",
+    subcategory="Cosmetics", subcategory_lower="cosmetics",
     presentation="Light yellow gel with a blue cover and transparent body PET 225ml",
     applicant_name="UNILEVER NIGERIA PLC", expiry_date_iso="2028-12-20",
 )
@@ -73,7 +75,8 @@ DANGOTE     = make_entry(
     nafdac_no="A8-100798", nafdac_no_clean="A8-100798",
     product_name="DANGOTE SUGAR REFINED GRANULATED WHITE SUGAR",
     product_name_upper="DANGOTE SUGAR REFINED GRANULATED WHITE SUGAR",
-    subcategory="Sweeteners", presentation="",   # Empty presentation — real data
+    subcategory="Sweeteners", subcategory_lower="sweeteners",
+    presentation="",   # Empty presentation — real data
     applicant_name="DANGOTE SUGAR REFINERY PLC",
     manufacturer="Dangote Sugar refinery Plc",
     expiry_date_iso="2027-01-26",

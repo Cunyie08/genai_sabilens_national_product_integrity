@@ -4,7 +4,7 @@ import Icon from '../../components/common/Icon';
 import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
 import ConsumerBottomNav from '../../components/layout/ConsumerBottomNav';
-import { getUserScanHistory, clearScanHistory, generateMockScan, saveScanToHistory } from '../../services/scanHistory';
+import { getUserScanHistory, clearScanHistory } from '../../services/scanHistory';
 import Modal from '../../components/common/Modal';
 
 const ScanHistory = () => {
@@ -27,29 +27,10 @@ const ScanHistory = () => {
     try {
       const history = getUserScanHistory();
       setScans(history);
-      
-      if (history.length === 0) {
-        addMockScans();
-      }
     } catch (error) {
       console.error('Error loading scans:', error);
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const addMockScans = () => {
-    try {
-      for (let i = 0; i < 8; i++) {
-        const mockScan = generateMockScan(Math.random() > 0.3);
-        saveScanToHistory(mockScan);
-      }
-      setTimeout(() => {
-        const updatedHistory = getUserScanHistory();
-        setScans(updatedHistory);
-      }, 100);
-    } catch (error) {
-      console.error('Error adding mock scans:', error);
     }
   };
 
@@ -89,7 +70,7 @@ const ScanHistory = () => {
       } else if (selectedScan.status === 'fake') {
         navigate('/scan/fake');
       } else {
-        navigate('/scan/caution');
+        navigate('/scan/suspicious');
       }
     }
   };
@@ -108,8 +89,8 @@ const ScanHistory = () => {
     switch(status) {
       case 'authentic':
         return <span className="px-3 py-1 bg-success/10 text-success text-xs rounded-full font-medium">Authentic</span>;
-      case 'caution':
-        return <span className="px-3 py-1 bg-warning/10 text-warning text-xs rounded-full font-medium">Caution</span>;
+      case 'suspicious':
+        return <span className="px-3 py-1 bg-warning/10 text-warning text-xs rounded-full font-medium">Suspicious</span>;
       case 'fake':
         return <span className="px-3 py-1 bg-danger/10 text-danger text-xs rounded-full font-medium">Fake</span>;
       default:
@@ -121,7 +102,7 @@ const ScanHistory = () => {
     switch(status) {
       case 'authentic':
         return <Icon name="CheckCircle" size={20} className="text-success" library="fi" />;
-      case 'caution':
+      case 'suspicious':
         return <Icon name="AlertTriangle" size={20} className="text-warning" library="fi" />;
       case 'fake':
         return <Icon name="XCircle" size={20} className="text-danger" library="fi" />;
@@ -181,14 +162,14 @@ const ScanHistory = () => {
             Authentic
           </button>
           <button
-            onClick={() => setFilter('caution')}
+            onClick={() => setFilter('suspicious')}
             className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
-              filter === 'caution' 
-                ? 'bg-warning text-white' 
+              filter === 'suspicious'
+                ? 'bg-warning text-white'
                 : 'bg-warning/10 text-warning hover:bg-warning/20'
             }`}
           >
-            Caution
+            Suspicious
           </button>
           <button
             onClick={() => setFilter('fake')}
@@ -222,8 +203,8 @@ const ScanHistory = () => {
             <p className="text-xs text-gray-400">Safe</p>
           </Card>
           <Card className="p-3 text-center">
-            <p className="text-xl font-bold text-warning">{scans.filter(s => s.status === 'caution').length}</p>
-            <p className="text-xs text-gray-400">Caution</p>
+            <p className="text-xl font-bold text-warning">{scans.filter(s => s.status === 'suspicious').length}</p>
+            <p className="text-xs text-gray-400">Suspicious</p>
           </Card>
           <Card className="p-3 text-center">
             <p className="text-xl font-bold text-danger">{scans.filter(s => s.status === 'fake').length}</p>

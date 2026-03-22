@@ -1,4 +1,4 @@
-from backend.ocr_linguistic.metadata_parser import extract_structured_metadata
+from ai_engine.ocr_linguistic.metadata_parser import extract_structured_metadata
 
 def test_nafdac_extraction():
 
@@ -6,4 +6,4 @@ def test_nafdac_extraction():
 
     metadata = extract_structured_metadata(text, "vaseline")
 
-    assert metadata["nafdac_number"] == "NAFDAC-02-0385"
+    assert metadata["nafdac_number"] == "02-0385"

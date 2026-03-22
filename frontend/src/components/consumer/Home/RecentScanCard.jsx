@@ -5,13 +5,13 @@ import Icon from '../../common/Icon';
 const RecentScanCard = ({ product, status, time, verified, productImage }) => {
   const statusColors = {
     authentic: 'text-success',
-    caution: 'text-warning',
+    suspicious: 'text-warning',
     fake: 'text-danger'
   };
 
   const statusBgColors = {
     authentic: 'bg-success/10',
-    caution: 'bg-warning/10',
+    suspicious: 'bg-warning/10',
     fake: 'bg-danger/10'
   };
 
@@ -19,7 +19,7 @@ const RecentScanCard = ({ product, status, time, verified, productImage }) => {
     switch(status) {
       case 'authentic':
         return <Icon name="CheckCircle" size={14} className="text-success" library="fi" />;
-      case 'caution':
+      case 'suspicious':
         return <Icon name="AlertTriangle" size={14} className="text-warning" library="fi" />;
       case 'fake':
         return <Icon name="XCircle" size={14} className="text-danger" library="fi" />;
@@ -55,7 +55,7 @@ const RecentScanCard = ({ product, status, time, verified, productImage }) => {
         <div className="flex items-center gap-2 mt-1">
           <span className={`text-xs px-2 py-0.5 rounded-full ${statusBgColors[status]} ${statusColors[status]} flex items-center gap-1`}>
             {getStatusIcon()}
-            {status === 'authentic' ? 'Authentic' : status === 'caution' ? 'Caution' : 'Fake'}
+            {status === 'authentic' ? 'Authentic' : status === 'suspicious' ? 'Suspicious' : 'Fake'}
           </span>
           {verified && (
             <span className="text-xs text-success flex items-center gap-1">

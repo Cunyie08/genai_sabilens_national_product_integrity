@@ -68,7 +68,7 @@ const Home = () => {
     } else if (scan.status === 'fake') {
       navigate('/scan/fake');
     } else {
-      navigate('/scan/caution');
+      navigate('/scan/suspicious');
     }
   };
 

@@ -34,7 +34,8 @@ WEIGHT SELECTION (Step 1 - before any scoring):
 
 OVERRIDE HIERARCHY (Step 2 - after weight selection, before scoring):
   Priority 1 - Regulatory CRITICAL status -> force FAKE (score=0.0)
-    Triggered by: NOT_FOUND, SUBCATEGORY_MISMATCH, AGENT_ERROR
+    Triggered by: AGENT_ERROR, EXPIRED
+    NOT_FOUND is NOT a hard override — it is a DB coverage gap (see reg_adapter.py).
   Priority 2 - Visual logo too low OR OCR no NAFDAC -> floor SUSPICIOUS (score=0.45)
     Only fires if weighted score would have been AUTHENTIC (>= 0.75).
     Does NOT fire if Regulatory override already fired.
@@ -386,6 +387,13 @@ def _build_warnings(
                 f"This is a classic counterfeiting technique - "
                 f"e.g. digit '0' replacing letter 'o', '1' replacing 'l'."
             ),
+        })
+
+    # Soft regulatory warnings (DB gap, subcategory mismatch, etc.)
+    if reg_signal.get("soft_warning"):
+        warnings.append({
+            "type":    reg_signal.get("status_code", "REG_WARNING"),
+            "message": reg_signal["soft_warning"],
         })
 
     return warnings

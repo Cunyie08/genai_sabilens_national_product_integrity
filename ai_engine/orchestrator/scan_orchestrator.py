@@ -16,11 +16,11 @@ WHAT THIS FILE DOES NOT DO:
   - Map verdicts           -> fusion's job (fusion_engine/core/decision_classifier.py)
   - Package evidence       -> fusion's job (fusion_engine/core/evidence_packager.py)
 
-CALL SEQUENCE PER SCAN:
-  1. _run_ocr()         -> OCR linguistic pipeline
-  2. _run_regulatory()  -> NAFDAC ReAct verification agent
-  3. _run_vision()      -> Visual similarity + damage pipeline
-  4. _run_fusion()      -> Fusion Engine (weights, verdict, evidence)
+CALL SEQUENCE PER SCAN (parallel execution):
+  Worker A │  _run_ocr_multi()  ──► category resolution ──► _run_regulatory()
+  Worker B │  _run_vision_multi() (runs concurrently with OCR + Regulatory)
+           │
+           └─► _run_fusion()  (after all three signals are collected)
 
 INTEGRATION STATUS:
   Visual     -> REAL  (VisualPipeline.analyze())
@@ -42,6 +42,10 @@ SUBCATEGORY MAPPING:
   Regulatory(RAG)'s fallback semantic search handles it.
 
 CATEGORY FALLBACK CHAIN (when frontend sends category="unknown"):
+    0. DB lookup: after OCR resolves the NAFDAC number, query products->product_categories
+        by nafdac_number. If found, this category wins outright (no further fallback needed).
+        Provided to scan() as an optional category_resolver callable so the AI engine
+        stays DB-agnostic.
     1. Use scanned_category from frontend if it maps to a known NAFDAC category.
     2. If scanned_category is "unknown" or unmapped, try OCR's detected brand name
         (e.g. "Vaseline" -> maps to "Cosmetics").
@@ -72,7 +76,8 @@ import logging
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable, Optional
 from ai_engine.agent.verification_agent import NAFDACVerificationAgent
 from ai_engine.fusion_engine.main import run_scan
 from ai_engine.orchestrator.pipeline import (
@@ -238,36 +243,59 @@ class ScanOrchestrator:
 
     def __init__(self):
 
-        logger.info("Initialising ScanOrchestrator - loading REG agent...")
+        logger.info("Initialising ScanOrchestrator - loading REG agent and Visual pipeline...")
         self._regulatory_agent = NAFDACVerificationAgent()
+
+        # Pre-load VisualPipeline so embeddings.pkl is unpickled once at startup,
+        # not on every scan request. Falls back to per-scan instantiation if the
+        # visual module is not yet importable.
+        try:
+            import sys as _sys, os as _os
+            _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', 'visual'))
+            from vision_engine.pipeline.visual_pipeline import VisualPipeline as _VP
+            self._visual_pipeline = _VP()
+            logger.info("VisualPipeline pre-loaded at startup.")
+        except Exception:
+            logger.warning(
+                "VisualPipeline pre-load failed; will attempt instantiation per scan.",
+                exc_info=True,
+            )
+            self._visual_pipeline = None
+
         logger.info("ScanOrchestrator ready.")
 
     def scan(
         self,
-        image_path:       str,
-        nafdac_no:        str,
-        scanned_category: str,
-        gps_coordinates:  dict,
-        purchase_channel: str,
-        image_paths:      Optional[list] = None,
-        receipt_image:    Optional[str] = None,
-        storefront_image: Optional[str] = None,
-        damage_score:     float = 0.0,
+        image_path:        str,
+        nafdac_no:         str,
+        scanned_category:  str,
+        gps_coordinates:   dict,
+        purchase_channel:  str,
+        image_paths:       Optional[list] = None,
+        receipt_image:     Optional[str] = None,
+        storefront_image:  Optional[str] = None,
+        damage_score:      float = 0.0,
+        category_resolver: Optional[Callable[[str], Optional[str]]] = None,
     ) -> PipelineResult:
         """
         Run the full Visual -> OCR -> Regulatory -> Fusion scan pipeline.
 
         Args:
-            image_path:       Primary image path (front of product). Always required.
-            image_paths:      All image paths [front, back, side, detail]. When provided,
-                              OCR and Vision process all images for a richer signal.
-            nafdac_no:        NAFDAC number. Can be empty (OCR will attempt extraction).
-            scanned_category: Product type hint mapped to NAFDAC category before regulatory.
-            gps_coordinates:  {"lat": float, "lng": float, "accuracy": float}
-            purchase_channel: "open_market" | "supermarket" | "pharmacy" | etc.
-            receipt_image:    Optional extra image for evidence package.
-            storefront_image: Optional extra image for evidence package.
-            damage_score:     Scan quality from vision DamageDetector — passed to ocr.
+            image_path:        Primary image path (front of product). Always required.
+            image_paths:       All image paths [front, back, side, detail]. When provided,
+                               OCR and Vision process all images for a richer signal.
+            nafdac_no:         NAFDAC number. Can be empty (OCR will attempt extraction).
+            scanned_category:  Product type hint mapped to NAFDAC category before regulatory.
+            gps_coordinates:   {"lat": float, "lng": float, "accuracy": float}
+            purchase_channel:  "open_market" | "supermarket" | "pharmacy" | etc.
+            receipt_image:     Optional extra image for evidence package.
+            storefront_image:  Optional extra image for evidence package.
+            damage_score:      Scan quality from vision DamageDetector — passed to ocr.
+            category_resolver: Optional sync callable(nafdac_no) -> category_name | None.
+                               Provided by the backend layer to look up the product category
+                               from the products/product_categories tables. Called after OCR
+                               resolves the effective NAFDAC number. Its result takes priority
+                               over both the frontend-supplied category and the OCR brand fallback.
 
         Returns:
             PipelineResult with all verdict fields from fusion's ScanResult.
@@ -283,8 +311,20 @@ class ScanOrchestrator:
             nafdac_no, scanned_category, purchase_channel, len(all_image_paths), image_path,
         )
 
-        # Collect OCR signal — runs on all provided images, merges results
-        ocr_signal = self._run_ocr_multi(all_image_paths, damage_score)
+        # Launch OCR and Vision in parallel — they are fully independent pipelines.
+        # OCR must finish before Regulatory can start (NAFDAC number extraction),
+        # but Vision has no such dependency. The pool keeps both workers busy:
+        #   Worker A: OCR (front + back images)
+        #   Worker B: Vision (front + back images)
+        # As soon as OCR finishes, Worker A picks up Regulatory while Worker B
+        # continues Vision. Total latency ≈ T_ocr + max(T_reg, T_vision_remainder).
+        _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="scan-worker")
+
+        ocr_future    = _pool.submit(self._run_ocr_multi, all_image_paths, damage_score)
+        vision_future = _pool.submit(self._run_vision_multi, all_image_paths)
+
+        # Block on OCR — needed to extract NAFDAC number and resolve category.
+        ocr_signal = ocr_future.result()
 
         # Use OCR's extracted NAFDAC number if caller did not pre-extract one
         effective_nafdac = nafdac_no or (
@@ -293,19 +333,49 @@ class ScanOrchestrator:
             .get("nafdac_number") or ""
         )
 
-        # Resolve best category hint (frontend -> OCR brand -> unknown)
-        #    This prevents SUBCATEGORY_MISMATCH when frontend sends category="unknown"
+        # Step 0: DB lookup — highest-priority category source.
+        # The backend injects category_resolver so the AI engine stays DB-agnostic.
+        # If the NAFDAC number is in the products table, use its registered category
+        # directly and skip the keyword/brand fallback chain entirely.
+        if category_resolver and effective_nafdac:
+            try:
+                db_category = category_resolver(effective_nafdac)
+                if db_category:
+                    logger.info(
+                        "Category from DB lookup | nafdac_no='%s' -> '%s' "
+                        "(overrides frontend='%s')",
+                        effective_nafdac, db_category, scanned_category,
+                    )
+                    scanned_category = db_category
+                else:
+                    logger.debug(
+                        "DB lookup returned no category for nafdac_no='%s'. "
+                        "Falling through to keyword/brand resolution.",
+                        effective_nafdac,
+                    )
+            except Exception:
+                logger.warning(
+                    "category_resolver raised an exception for nafdac_no='%s'. "
+                    "Falling through to keyword/brand resolution.",
+                    effective_nafdac,
+                    exc_info=True,
+                )
+
+        # Resolve best category hint (DB result -> frontend -> OCR brand -> unknown)
         nafdac_category = _resolve_category(scanned_category, ocr_signal)
         logger.info(
             "Category resolved | frontend='%s' -> regulatory='%s'",
             scanned_category, nafdac_category,
         )
 
-        # Run regulatory ReAct agent
-        regulatory_signal = self._run_regulatory(effective_nafdac, nafdac_category)
+        # OCR worker is now free — start Regulatory immediately.
+        # Vision is still running concurrently on the other worker.
+        reg_future = _pool.submit(self._run_regulatory, effective_nafdac, nafdac_category)
 
-        # Collect vision signal — runs on all provided images, picks best result
-        vision_signal = self._run_vision_multi(all_image_paths)
+        # Collect Vision and Regulatory; whichever finishes first doesn't block the other.
+        vision_signal     = vision_future.result()
+        regulatory_signal = reg_future.result()
+        _pool.shutdown(wait=False)
 
         # Hand everything to fusion 
         # fusion owns: weights, overrides, damage logic, verdict, evidence packaging.
@@ -511,13 +581,16 @@ class ScanOrchestrator:
     def _run_vision(self, image_path: str) -> AgentSignal:
         """Run Visual pipeline on a single image. Falls back to mock on any exception."""
         try:
-            import sys, os
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'visual'))
-            from vision_engine.pipeline.visual_pipeline import VisualPipeline
+            pipeline = self._visual_pipeline
+            if pipeline is None:
+                import sys, os
+                sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'visual'))
+                from vision_engine.pipeline.visual_pipeline import VisualPipeline
+                pipeline = VisualPipeline()
+                self._visual_pipeline = pipeline
 
             logger.info("Vision | image=%s", image_path)
-            pipeline = VisualPipeline()
-            result   = pipeline.analyze(image_path)
+            result = pipeline.analyze(image_path)
 
             logger.info(
                 "Vision complete | product=%s | similarity=%s | "
@@ -547,15 +620,20 @@ class ScanOrchestrator:
         image beats a low-confidence result on the primary image.
         Falls back to mock if every image fails vision.
         """
-        try:
-            import sys, os
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'visual'))
-            from vision_engine.pipeline.visual_pipeline import VisualPipeline
-        except Exception:
-            logger.warning("Vision import failed - using mock signal.", exc_info=True)
-            return self._mock_vision_signal()
+        # Use the singleton pre-loaded at startup; fall back to fresh instantiation
+        # if startup loading failed (e.g. visual module not yet installed).
+        pipeline = self._visual_pipeline
+        if pipeline is None:
+            try:
+                import sys, os
+                sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'visual'))
+                from vision_engine.pipeline.visual_pipeline import VisualPipeline
+                pipeline = VisualPipeline()
+                self._visual_pipeline = pipeline   # cache for subsequent scans
+            except Exception:
+                logger.warning("Vision import failed - using mock signal.", exc_info=True)
+                return self._mock_vision_signal()
 
-        pipeline = VisualPipeline()
         best_result = None
         best_confidence = -1.0
 

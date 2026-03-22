@@ -20,7 +20,7 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
     if (storedScan) {
       try {
         const parsed = JSON.parse(storedScan);
-        productImage = parsed.productImage;
+        productImage = parsed.imageUrl || parsed.productImage;
         aiResult = parsed.aiResult || null;
         scanLocation = parsed.location || '';
         scanLat = parsed.latitude ?? null;

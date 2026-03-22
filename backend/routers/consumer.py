@@ -34,10 +34,8 @@ _upload_executor = ThreadPoolExecutor(max_workers=2)
 
 class ScanRequest(BaseModel):
     """Payload sent by the frontend when starting a scan."""
-    image_data: str                              # base64 data-URL or remote URL (front / phase-0)
-    back_image_data: Optional[str] = None        # back panel (phase-1)
-    side_image_data: Optional[str] = None        # side panel (phase-2)
-    detail_image_data: Optional[str] = None      # detail / seal (phase-3)
+    image_data: str                              # base64 data-URL or remote URL (front)
+    back_image_data: Optional[str] = None        # back panel
     nafdac_no: Optional[str] = ""
     category: Optional[str] = "unknown"
     latitude: Optional[float] = 0.0
@@ -108,8 +106,6 @@ async def _save_scan_to_db(
         all_image_urls = [u for u in [
             image_url,
             data.get("back_image_url"),
-            data.get("side_image_url"),
-            data.get("detail_image_url"),
         ] if u]
 
         scan = Scan(
@@ -180,8 +176,6 @@ async def submit_scan(req: ScanRequest):
         ai_result = await run_scan_analysis(
             image_data=req.image_data,
             back_image_data=req.back_image_data,
-            side_image_data=req.side_image_data,
-            detail_image_data=req.detail_image_data,
             nafdac_no=req.nafdac_no or "",
             category=req.category or "unknown",
             latitude=req.latitude or 0.0,
@@ -206,9 +200,7 @@ async def submit_scan(req: ScanRequest):
             logger.info("Front image uploaded: %s", image_url)
 
         for attr, key, label in [
-            ("back_image_data",   "back_image_url",   "Back"),
-            ("side_image_data",   "side_image_url",   "Side"),
-            ("detail_image_data", "detail_image_url", "Detail"),
+            ("back_image_data", "back_image_url", "Back"),
         ]:
             raw = getattr(req, attr, None)
             if raw:

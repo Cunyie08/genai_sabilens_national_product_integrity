@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import httpx
+from backend.config import settings
 
 logger = logging.getLogger("ai_integration")
 
@@ -32,9 +33,63 @@ for _p in (_REPO_ROOT, _AI_ENGINE_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+# ── DB category lookup (sync — used inside the thread pool) ──────────────────
+
+def _make_category_resolver(db_url: str):
+    """
+    Return a sync callable(nafdac_no) -> Optional[str] that queries the products
+    table joined to product_categories and returns the category name, or None if
+    the NAFDAC number is not found.
+
+    Uses a short-lived SQLAlchemy sync engine so the orchestrator thread can call
+    it without needing an async event loop.  The asyncpg dialect prefix is swapped
+    to psycopg2 so SQLAlchemy can use a sync driver.
+    """
+    import sqlalchemy as _sa
+
+    # Convert "postgresql+asyncpg://..." to "postgresql+psycopg2://..."
+    sync_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
+    # Also handle plain "postgresql://..." (already sync-compatible)
+
+    _engine = None
+
+    def _resolver(nafdac_no: str) -> Optional[str]:
+        nonlocal _engine
+        if not nafdac_no:
+            return None
+        try:
+            if _engine is None:
+                _engine = _sa.create_engine(
+                    sync_url,
+                    pool_size=1,
+                    max_overflow=0,
+                    pool_pre_ping=True,
+                )
+            with _engine.connect() as conn:
+                row = conn.execute(
+                    _sa.text(
+                        "SELECT pc.name "
+                        "FROM products p "
+                        "JOIN product_categories pc ON pc.id = p.category_id "
+                        "WHERE p.nafdac_number = :nafdac_no "
+                        "LIMIT 1"
+                    ),
+                    {"nafdac_no": nafdac_no},
+                ).fetchone()
+            return row[0] if row else None
+        except Exception:
+            logger.warning(
+                "DB category lookup failed for nafdac_no='%s'.", nafdac_no, exc_info=True
+            )
+            return None
+
+    return _resolver
+
+
 # ── Singleton orchestrator ────────────────────────────────────────────────────
 _orchestrator = None
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ai-worker")
+_category_resolver = _make_category_resolver(settings.DATABASE_URL)
 
 
 def _get_orchestrator():
@@ -110,6 +165,7 @@ def _run_orchestrator_sync(
         scanned_category=category,
         gps_coordinates=gps,
         purchase_channel=purchase_channel,
+        category_resolver=_category_resolver,
     )
 
     return {
@@ -140,8 +196,6 @@ def _run_orchestrator_sync(
 async def run_scan_analysis(
     image_data: str,
     back_image_data: Optional[str] = None,
-    side_image_data: Optional[str] = None,
-    detail_image_data: Optional[str] = None,
     nafdac_no: str = "",
     category: str = "unknown",
     latitude: float = 0.0,
@@ -150,15 +204,13 @@ async def run_scan_analysis(
 ) -> dict:
     """
     Full scan pipeline:
-      1. Save/download up to 4 images to temp files.
-      2. Run ScanOrchestrator in a thread pool (non-blocking) with all image paths.
+      1. Save front and (optionally) back images to temp files.
+      2. Run ScanOrchestrator in a thread pool (non-blocking) with both image paths.
       3. Clean up temp files.
       4. Return normalised result dict.
     """
     tmp_path: Optional[str] = None
     back_tmp_path: Optional[str] = None
-    side_tmp_path: Optional[str] = None
-    detail_tmp_path: Optional[str] = None
     try:
         tmp_path = await _prepare_image(image_data)
         logger.info("Front image saved to %s", tmp_path)
@@ -167,16 +219,8 @@ async def run_scan_analysis(
             back_tmp_path = await _prepare_image(back_image_data)
             logger.info("Back image saved to %s", back_tmp_path)
 
-        if side_image_data:
-            side_tmp_path = await _prepare_image(side_image_data)
-            logger.info("Side image saved to %s", side_tmp_path)
-
-        if detail_image_data:
-            detail_tmp_path = await _prepare_image(detail_image_data)
-            logger.info("Detail image saved to %s", detail_tmp_path)
-
-        # Build ordered list: front is always first (primary)
-        image_paths = [p for p in [tmp_path, back_tmp_path, side_tmp_path, detail_tmp_path] if p]
+        # Build ordered list: front first, back second if provided
+        image_paths = [p for p in [tmp_path, back_tmp_path] if p]
         logger.info("Running orchestrator with %d image(s)", len(image_paths))
 
         gps = {"lat": latitude, "lng": longitude, "accuracy": 10.0}
@@ -197,7 +241,7 @@ async def run_scan_analysis(
         return result
 
     finally:
-        for path in [tmp_path, back_tmp_path, side_tmp_path, detail_tmp_path]:
+        for path in [tmp_path, back_tmp_path]:
             if path and os.path.exists(path):
                 try:
                     os.unlink(path)
