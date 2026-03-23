@@ -21,6 +21,7 @@ from backend.utils.response import success_response, error_response
 from backend.services.ai_integration import run_scan_analysis
 from backend.models.scan import Scan, ScanAnalysis
 from backend.utils.image_upload import upload_scan_image
+from backend.dependencies import get_optional_user
 
 logger = logging.getLogger("consumer.router")
 
@@ -86,6 +87,7 @@ async def _save_scan_to_db(
     data: dict,
     req: ScanRequest,
     image_url: Optional[str],
+    user_id=None,
 ) -> Optional[str]:
     """
     Persist the scan result to the database.
@@ -110,6 +112,7 @@ async def _save_scan_to_db(
 
         scan = Scan(
             id=uuid.UUID(data["scan_id"]),
+            user_id=user_id,
             product_name=evidence.get("product_name") or req.product_name or None,
             category=req.category or None,
             nafdac_number=evidence.get("nafdac_number") or req.nafdac_no or None,
@@ -161,7 +164,10 @@ async def _save_scan_to_db(
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/scan")
-async def submit_scan(req: ScanRequest):
+async def submit_scan(
+    req: ScanRequest,
+    current_user=Depends(get_optional_user),
+):
     """
     Run the full AI scan pipeline on the submitted product image.
 
@@ -210,7 +216,8 @@ async def submit_scan(req: ScanRequest):
                     logger.info("%s image uploaded: %s", label, url)
 
         # Save scan to DB in background — failure does not block the response
-        asyncio.create_task(_save_scan_to_db(data, req, image_url))
+        user_id = current_user.id if current_user else None
+        asyncio.create_task(_save_scan_to_db(data, req, image_url, user_id=user_id))
 
         return success_response(data=data, message="Scan analysis complete")
 

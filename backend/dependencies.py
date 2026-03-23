@@ -54,6 +54,33 @@ async def get_current_user(
     return user
 
 
+async def get_optional_user(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_db),
+):
+    """Decode JWT and return current user, or None if token is absent/invalid."""
+    from backend.models.user import User
+
+    if not credentials or credentials.scheme.lower() != "bearer":
+        return None
+
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            return None
+    except JWTError:
+        return None
+
+    result = await db.execute(select(User).where(User.id == UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if not user or user.deleted_at is not None:
+        return None
+
+    return user
+
+
 def require_role(*roles: str):
     """Dependency factory that enforces role-based access control."""
     async def role_checker(current_user=Depends(get_current_user)):
