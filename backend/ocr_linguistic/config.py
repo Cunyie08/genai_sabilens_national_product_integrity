@@ -136,16 +136,7 @@ BATCH_IN_TEXT_PATTERN = re.compile(
     r"(?:BATCH|LOT|BATCH\s*NO\.?)\s*:?\s*([A-Z0-9]{6,15})",
     re.IGNORECASE
 )
-# ONLY used in Pass 2 of two-pass extraction. Never used for primary matching.
-NAFDAC_IN_TEXT_PATTERN_LOOSE = re.compile(
-    r"(?:NAFDAC\s*(?:REG(?:ISTRATION)?\s*)?(?:NO\.?|NUMBER)?\s*|"
-    r"REG(?:ISTRATION)?\s*(?:NO\.?|NUMBER)\s*)"
-    r":?\s*([A-Z][A-Z0-9]{0,2}-[A-Z0-9]{3,6})",
-    re.IGNORECASE
-)
 
-# Loose NAFDAC pattern - catches OCR misreads like AQ-106037
-NAFDAC_STANDALONE_LOOSE = re.compile(r"\b[A-Z][A-Z0-9]{0,1}-[A-Z0-9]{3,6}\b")
 # Manufacturer name in full label text
 MANUFACTURER_IN_TEXT_PATTERN = re.compile(
     r"(?:Manufactured\s+by|Marketed\s+by|Distributed\s+by)\s*:?\s*(.+?)(?:\.|,|\n|$)",

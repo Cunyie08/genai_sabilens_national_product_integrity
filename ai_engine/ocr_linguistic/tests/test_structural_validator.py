@@ -1,4 +1,4 @@
-from backend.ocr_linguistic.structural_validator import StructuralValidator
+from ai_engine.ocr_linguistic.structural_validator import StructuralValidator
 
 def test_structural_validation():
 

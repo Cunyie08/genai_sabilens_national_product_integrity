@@ -15,7 +15,6 @@ NAFDAC FALLBACK STRATEGY:
 import cv2
 import numpy as np
 from paddleocr import PaddleOCR
-
 from .config import (
     NAFDAC_IN_TEXT_PATTERN,
     NAFDAC_PATTERN,

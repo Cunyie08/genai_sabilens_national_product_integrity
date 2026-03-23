@@ -45,13 +45,14 @@ def test_authentic_scan():
     assert result["weight_mode"] == "BASE"
     print(f"authentic | score={result['final_score']} | mode={result['weight_mode']}")
 
-def test_fake_not_found_override():
+def test_not_found_produces_suspicious():
+    # NOT_FOUND is a DB coverage gap — does NOT force FAKE.
+    # With clean visual+OCR, the verdict is SUSPICIOUS (reg score=0.0, no hard override).
     result = run_scan(VISUAL, OCR, REG_NOT_FOUND, GPS, "open_market",
                       package_evidence=False)
-    assert result["verdict"] == "FAKE", result["verdict"]
-    assert result["override_applied"] is True
-    assert result["action"] == "DO NOT BUY"
-    print(f"fake (NOT_FOUND override) | score={result['final_score']}")
+    assert result["verdict"] in ("AUTHENTIC", "SUSPICIOUS"), result["verdict"]
+    assert result["override_applied"] is False
+    print(f"not_found (soft warning) | score={result['final_score']} | verdict={result['verdict']}")
 
 def test_damaged_weights():
     a1_blurry = {**VISUAL, "damage_score": 0.8, "blur_value": 12.0,

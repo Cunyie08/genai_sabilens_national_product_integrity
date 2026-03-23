@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Icon from '../../common/Icon';
 import Card from '../../common/Card';
 import { scanApi } from '../../../services/api';
 
-const TOTAL_PHASES = 4;
+const TOTAL_PHASES = 2;
 
 const scanPhases = [
   {
@@ -21,42 +21,20 @@ const scanPhases = [
     id: 1,
     name: 'Back Panel',
     instruction: 'Scan the back of the product',
-    description: 'Show the ingredients and manufacturing details',
-    target: 'Ingredients, manufacturer address, batch number',
+    description: 'Show the NAFDAC number, batch code and manufacturer details',
+    target: 'NAFDAC number, batch code, expiry date, manufacturer',
     icon: 'RotateCcw',
     color: 'from-green-500/20',
-    nextInstruction: 'Good! Now show the left side',
-  },
-  {
-    id: 2,
-    name: 'Side Panel',
-    instruction: 'Scan the side of the product',
-    description: 'Show barcode, expiry date and lot number',
-    target: 'Barcode, expiry date, lot / batch code',
-    icon: 'AlignJustify',
-    color: 'from-orange-500/20',
-    nextInstruction: 'Almost done! Capture any seals or stamps',
-  },
-  {
-    id: 3,
-    name: 'Detail / Seal',
-    instruction: 'Capture holograms, seals or stamps',
-    description: 'Show any security marks, holograms or NAFDAC stickers',
-    target: 'Holograms, seals, stamps, additional marks',
-    icon: 'Shield',
-    color: 'from-purple-500/20',
-    nextInstruction: 'All 4 sides captured! Sending to AI…',
+    nextInstruction: 'Both sides captured! Sending to AI…',
   },
 ];
 
 const featuresByPhase = {
   0: ['✓ Brand detected', '✓ Logo region found', '✓ NAFDAC area located', '✓ Text extracted'],
-  1: ['✓ Ingredients list found', '✓ Manufacturer info', '✓ Batch code detected', '✓ Expiry date found'],
-  2: ['✓ Barcode scanned', '✓ Expiry date confirmed', '✓ Lot number found', '✓ Side text extracted'],
-  3: ['✓ Hologram checked', '✓ Security seal found', '✓ Stamp verified', '✓ Mark analysis done'],
+  1: ['✓ NAFDAC number found', '✓ Batch code detected', '✓ Expiry date found', '✓ Manufacturer info'],
 };
 
-const emptyImages = { 0: null, 1: null, 2: null, 3: null };
+const emptyImages = { 0: null, 1: null };
 
 const ScanScreen = () => {
   const navigate = useNavigate();
@@ -78,12 +56,15 @@ const ScanScreen = () => {
   const [progress, setProgress] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
-  const [capturedImages, setCapturedImages] = useState(emptyImages);
+  const [uploadMode, setUploadMode] = useState(false);
+  const [uploadSlots, setUploadSlots] = useState({ 0: null, 1: null });
 
   // Refs
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const canvasRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const uploadSlotRef = useRef(0); // which slot the next file pick will fill
   const scanIntervalRef = useRef(null);
   const phaseRef = useRef(0);
   const scanningRef = useRef(false);
@@ -174,7 +155,6 @@ const ScanScreen = () => {
     canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
     capturedImagesRef.current = { ...capturedImagesRef.current, [phaseIndex]: dataUrl };
-    setCapturedImages((prev) => ({ ...prev, [phaseIndex]: dataUrl }));
     return dataUrl;
   }, []);
 
@@ -184,10 +164,8 @@ const ScanScreen = () => {
     setSubmitting(true);
     setSubmitError(null);
 
-    const primaryImage   = images[0];  // front panel
-    const backImage      = images[1] || null;  // back panel
-    const sideImage      = images[2] || null;  // side panel
-    const detailImage    = images[3] || null;  // detail / seal
+    const primaryImage = images[0];  // front panel
+    const backImage    = images[1] || null;  // back panel
 
     if (!primaryImage) {
       setSubmitError('No image captured. Please try again.');
@@ -199,15 +177,13 @@ const ScanScreen = () => {
 
     try {
       const payload = {
-        image_data:        primaryImage,
-        back_image_data:   backImage,
-        side_image_data:   sideImage,
-        detail_image_data: detailImage,
-        category:          'unknown',
-        purchase_channel:  'unknown',
-        latitude:          geo.latitude,
-        longitude:         geo.longitude,
-        location_text:     geo.address || '',
+        image_data:       primaryImage,
+        back_image_data:  backImage,
+        category:         'unknown',
+        purchase_channel: 'unknown',
+        latitude:         geo.latitude,
+        longitude:        geo.longitude,
+        location_text:    geo.address || '',
       };
 
       const response = await scanApi.submitScan(payload);
@@ -217,6 +193,7 @@ const ScanScreen = () => {
 
       sessionStorage.setItem('currentScan', JSON.stringify({
         productImage:     primaryImage,
+        imageUrl:         data.image_url || null,
         isAuthentic:      verdict === 'AUTHENTIC',
         isSuspicious:     verdict === 'SUSPICIOUS',
         isRescanRequired: verdict === 'RESCAN_REQUIRED',
@@ -309,7 +286,6 @@ const ScanScreen = () => {
     setCompletedPhases([]);
     setDetectedFeatures([]);
     capturedImagesRef.current = { ...emptyImages };
-    setCapturedImages({ ...emptyImages });
     setSubmitError(null);
     runPhase(0);
   }, [cameraActive, runPhase]);
@@ -329,40 +305,39 @@ const ScanScreen = () => {
     setSubmitError(null);
   }, []);
 
+  const handleFileUpload = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setSubmitError(null);
+    const slot = uploadSlotRef.current;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setUploadSlots(prev => ({ ...prev, [slot]: reader.result }));
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  const handleSubmitUploads = useCallback(() => {
+    if (!uploadSlots[0] || !uploadSlots[1]) {
+      setSubmitError('Please select both the front and back panel images before analysing.');
+      return;
+    }
+    const slots = { ...uploadSlots };
+    setUploadSlots({ 0: null, 1: null });
+    setUploadMode(false);
+    submitToAI(slots);
+  }, [uploadSlots, submitToAI]);
+
+  const openSlotPicker = useCallback((slotIndex) => {
+    uploadSlotRef.current = slotIndex;
+    fileInputRef.current?.click();
+  }, []);
+
   const continueToNextPhase = useCallback(() => {
     setShowNextPrompt(false);
     if (currentPhase < TOTAL_PHASES - 1) runPhase(currentPhase + 1);
   }, [currentPhase, runPhase]);
-
-  // ── File upload fallback ─────────────────────────────────────────────────────
-
-  const handleUploadClick = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.multiple = true;
-    input.onchange = async (e) => {
-      if (!e.target.files?.length) return;
-      const files = Array.from(e.target.files).slice(0, TOTAL_PHASES);
-      const readFile = (file) =>
-        new Promise((res) => {
-          const reader = new FileReader();
-          reader.onload = (ev) => res(ev.target.result);
-          reader.readAsDataURL(file);
-        });
-
-      const dataUrls = await Promise.all(files.map(readFile));
-      const imgs = { ...emptyImages };
-      dataUrls.forEach((url, i) => { imgs[i] = url; });
-
-      setScanning(true);
-      setSubmitting(true);
-      setSubmitError(null);
-      capturedImagesRef.current = imgs;
-      await submitToAI(imgs);
-    };
-    input.click();
-  };
 
   const currentPhaseData = scanPhases[currentPhase] ?? scanPhases[0];
 
@@ -381,6 +356,7 @@ const ScanScreen = () => {
           className="absolute inset-0 w-full h-full object-cover"
         />
         <canvas ref={canvasRef} className="hidden" />
+        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
 
         {/* Camera placeholder */}
         {!cameraActive && (
@@ -539,12 +515,20 @@ const ScanScreen = () => {
         {/* Bottom camera controls */}
         <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent z-10">
           <div className="flex justify-between items-end">
-            <button onClick={handleUploadClick} disabled={submitting} className="flex flex-col items-center gap-2 group disabled:opacity-50">
-              <div className="w-14 h-14 bg-white/10 backdrop-blur rounded-full flex items-center justify-center group-hover:bg-white/20 transition-all group-hover:scale-110 border border-white/20">
-                <Icon name="Upload" size={22} className="text-white" library="fi" />
-              </div>
-              <span className="text-white text-xs font-medium">Upload</span>
-            </button>
+            {/* Upload from gallery */}
+            {!scanning && !submitting ? (
+              <button
+                onClick={() => { setUploadMode(true); setUploadSlots({ 0: null, 1: null }); setSubmitError(null); }}
+                className="flex flex-col items-center gap-2 group"
+              >
+                <div className="w-14 h-14 bg-white/10 backdrop-blur rounded-full flex items-center justify-center group-hover:bg-white/20 transition-all group-hover:scale-110 border border-white/20">
+                  <Icon name="Image" size={22} className="text-white" library="fi" />
+                </div>
+                <span className="text-white text-xs font-medium">Upload</span>
+              </button>
+            ) : (
+              <div className="w-14" />
+            )}
 
             {!scanning ? (
               <button
@@ -597,7 +581,7 @@ const ScanScreen = () => {
 
       {/* Status Panel */}
       <div className="bg-white p-6 rounded-t-3xl min-h-[30vh] relative z-20">
-        {submitError && (
+        {submitError && !uploadMode && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3">
             <Icon name="AlertCircle" size={20} className="text-red-500 shrink-0" library="fi" />
             <p className="text-sm text-red-700">{submitError}</p>
@@ -609,13 +593,78 @@ const ScanScreen = () => {
           <div className="text-center py-8">
             <div className="w-20 h-20 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
             <h2 className="text-xl font-bold text-gray-900 mb-2">SabiLens AI is working…</h2>
-            <p className="text-gray-500 text-sm">Running OCR, visual analysis, and NAFDAC verification on all {TOTAL_PHASES} images</p>
+            <p className="text-gray-500 text-sm">Running OCR, visual analysis, and NAFDAC verification on both images</p>
           </div>
+        ) : uploadMode ? (
+          <>
+            <div className="flex items-center gap-3 mb-4">
+              <button onClick={() => { setUploadMode(false); setUploadSlots({ 0: null, 1: null }); setSubmitError(null); }}>
+                <Icon name="ArrowLeft" size={20} className="text-gray-500" library="fi" />
+              </button>
+              <h2 className="text-xl font-bold text-gray-900">Upload Product Images</h2>
+            </div>
+            <p className="text-sm text-gray-500 mb-5">
+              Select the <span className="font-medium text-gray-700">front panel</span> and <span className="font-medium text-gray-700">back panel</span> of the product. Both images are required.
+            </p>
+
+            <div className="grid grid-cols-2 gap-4 mb-5">
+              {[
+                { slot: 0, label: 'Front Panel', hint: 'Brand, logo, NAFDAC no.' },
+                { slot: 1, label: 'Back Panel',  hint: 'Batch code, expiry, mfr.' },
+              ].map(({ slot, label, hint }) => (
+                <div key={slot} className="flex flex-col gap-2">
+                  <p className="text-xs font-semibold text-gray-600">{label}</p>
+                  <button
+                    onClick={() => openSlotPicker(slot)}
+                    className={`relative h-36 rounded-xl border-2 border-dashed flex flex-col items-center justify-center overflow-hidden transition-all
+                      ${uploadSlots[slot] ? 'border-primary/40 bg-primary/5' : 'border-gray-200 hover:border-primary/40 hover:bg-gray-50'}`}
+                  >
+                    {uploadSlots[slot] ? (
+                      <>
+                        <img src={uploadSlots[slot]} alt={label} className="absolute inset-0 w-full h-full object-cover rounded-xl" />
+                        <div className="absolute inset-0 bg-black/30 rounded-xl flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                          <span className="text-white text-xs font-medium">Change</span>
+                        </div>
+                        <div className="absolute top-2 right-2 w-6 h-6 bg-primary rounded-full flex items-center justify-center">
+                          <Icon name="Check" size={12} className="text-white" library="fi" />
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <Icon name="Image" size={28} className="text-gray-300 mb-2" library="fi" />
+                        <span className="text-xs text-gray-400 text-center px-2">{hint}</span>
+                        <span className="text-xs text-primary font-medium mt-1">Tap to select</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {submitError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2">
+                <Icon name="AlertCircle" size={16} className="text-red-500 shrink-0" library="fi" />
+                <p className="text-xs text-red-700">{submitError}</p>
+              </div>
+            )}
+
+            <button
+              onClick={handleSubmitUploads}
+              disabled={!uploadSlots[0] || !uploadSlots[1]}
+              className={`w-full py-4 rounded-xl font-medium flex items-center justify-center gap-2 transition-all
+                ${uploadSlots[0] && uploadSlots[1]
+                  ? 'bg-primary text-white shadow-lg shadow-primary/30 hover:bg-primary-dark'
+                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
+            >
+              <Icon name="Zap" size={18} library="fi" />
+              {uploadSlots[0] && uploadSlots[1] ? 'Analyse Both Images' : `Select ${!uploadSlots[0] ? 'Front' : 'Back'} Panel Image`}
+            </button>
+          </>
         ) : !scanning ? (
           <>
             <h2 className="text-2xl font-bold text-gray-900 mb-2">Ready to Scan</h2>
             <p className="text-gray-500 mb-6">
-              We'll guide you through capturing all 4 sides of the product for thorough AI-powered verification.
+              We'll guide you through capturing the front and back of the product for AI-powered verification.
             </p>
             <div className="grid grid-cols-2 gap-3 mb-8">
               {scanPhases.map((phase) => (
@@ -649,6 +698,18 @@ const ScanScreen = () => {
                 Make sure the product is well-lit and all labels are clearly visible.
               </p>
             )}
+            <div className="flex items-center gap-3 mt-4">
+              <div className="flex-1 h-px bg-gray-200" />
+              <span className="text-xs text-gray-400">or</span>
+              <div className="flex-1 h-px bg-gray-200" />
+            </div>
+            <button
+              onClick={() => { setUploadMode(true); setUploadSlots({ 0: null, 1: null }); setSubmitError(null); }}
+              className="mt-3 w-full py-3 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors"
+            >
+              <Icon name="Image" size={18} className="text-gray-500" library="fi" />
+              Upload Images from Gallery
+            </button>
           </>
         ) : (
           <>

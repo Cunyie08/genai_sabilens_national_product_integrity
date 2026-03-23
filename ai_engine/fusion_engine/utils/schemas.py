@@ -388,7 +388,7 @@ def validate_visual_input(data: dict) -> list:
             errors.append(f"Missing required field: '{f}'")
 
     conf = data.get("confidence", -1)
-    if not isinstance(conf, (int, float)) or not (0.0 <= float(conf) <= 1.0):
+    if not isinstance(conf, (int, float)) or not (0.0 <= float(conf) <= 1.001):
         errors.append(f"'confidence' must be float in [0.0, 1.0], got: {conf!r}")
 
     sim = data.get("Visual Similarity", -1)

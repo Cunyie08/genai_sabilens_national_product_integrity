@@ -254,15 +254,21 @@ class TestAdapters:
     def test_reg_verified_maps_to_hundred(self):
         assert reg_adapt(make_reg(score=1.0))["fusion_score"] == pytest.approx(1.0, abs=0.001)
 
-    def test_reg_not_found_triggers_override(self):
+    def test_reg_not_found_no_override_has_soft_warning(self):
+        # NOT_FOUND is a DB coverage gap — does NOT force FAKE, adds a soft warning
         sig = reg_adapt(make_reg(score=0.0, status="NOT_FOUND",
                                  severity="CRITICAL", verified=False))
-        assert sig["override_flag"] is True
+        assert sig["override_flag"] is False
+        assert sig["soft_warning"] is not None
+        assert "database" in sig["soft_warning"].lower()
 
-    def test_reg_subcategory_mismatch_triggers_override(self):
+    def test_reg_subcategory_mismatch_no_override_has_soft_warning(self):
+        # SUBCATEGORY_MISMATCH means product was found but category hint was wrong
+        # — does NOT force FAKE, adds a soft warning
         sig = reg_adapt(make_reg(score=0.2, status="SUBCATEGORY_MISMATCH",
                                  severity="CRITICAL", verified=False))
-        assert sig["override_flag"] is True
+        assert sig["override_flag"] is False
+        assert sig["soft_warning"] is not None
 
     def test_reg_expired_triggers_override(self):
         sig = reg_adapt(make_reg(score=0.1, status="EXPIRED",
@@ -299,17 +305,19 @@ class TestFusionEngine:
     def test_clean_signals_produce_authentic(self):
         assert self._fuse()["verdict"] == "AUTHENTIC"
 
-    def test_not_found_forces_fake(self):
+    def test_not_found_does_not_force_fake(self):
+        # NOT_FOUND is a DB gap — visual+OCR signals determine the verdict
         r = self._fuse(reg_kw={"score": 0.0, "status": "NOT_FOUND",
                                 "severity": "CRITICAL", "verified": False})
-        assert r["verdict"] == "FAKE"
-        assert r["override_applied"] is True
+        assert r["verdict"] in ("AUTHENTIC", "SUSPICIOUS")
+        assert r["override_applied"] is False
 
-    def test_subcategory_mismatch_forces_fake(self):
+    def test_subcategory_mismatch_does_not_force_fake(self):
+        # SUBCATEGORY_MISMATCH: product found, category hint wrong — not a hard FAKE
         r = self._fuse(reg_kw={"score": 0.2, "status": "SUBCATEGORY_MISMATCH",
                                 "severity": "CRITICAL", "verified": False})
-        assert r["verdict"] == "FAKE"
-        assert r["override_applied"] is True
+        assert r["verdict"] in ("AUTHENTIC", "SUSPICIOUS")
+        assert r["override_applied"] is False
 
     def test_missing_nafdac_floors_to_suspicious(self):
         r = self._fuse(ocr_kw={"nafdac": None})
@@ -399,15 +407,16 @@ class TestDecisionClassifier:
         assert clf["report_priority"] == "PROMPT"
 
     def test_fake_action_is_do_not_buy(self):
-        clf = self._classify(reg_kw={"score": 0.0, "status": "NOT_FOUND",
+        # Use AGENT_ERROR (hard override) to produce a FAKE verdict
+        clf = self._classify(reg_kw={"score": 0.0, "status": "AGENT_ERROR",
                                      "severity": "CRITICAL", "verified": False})
         assert clf["action"] == "DO NOT BUY"
         assert clf["report_priority"] == "AUTO"
 
-    def test_scan_id_is_12_chars(self):
+    def test_scan_id_is_uuid4(self):
         clf = self._classify()
         assert clf["scan_id"] is not None
-        assert len(clf["scan_id"]) == 12
+        assert len(clf["scan_id"]) == 36   # UUID4 format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
     def test_atlas_instruction_not_empty(self):
         assert len(self._classify()["atlas_instruction"]) > 20
@@ -427,7 +436,8 @@ class TestDecisionClassifier:
         assert self._classify()["severity"] == "NONE"
 
     def test_severity_critical_for_fake(self):
-        clf = self._classify(reg_kw={"score": 0.0, "status": "NOT_FOUND",
+        # Use AGENT_ERROR (hard override) to produce a FAKE with CRITICAL severity
+        clf = self._classify(reg_kw={"score": 0.0, "status": "AGENT_ERROR",
                                      "severity": "CRITICAL", "verified": False})
         assert clf["severity"] == "CRITICAL"
 
@@ -448,7 +458,8 @@ class TestEvidencePackager:
         return package(clf, gps_coordinates=gps or GPS, purchase_channel=channel)
 
     def _fake_reg(self):
-        return {"score": 0.0, "status": "NOT_FOUND", "severity": "CRITICAL", "verified": False}
+        # Use AGENT_ERROR to produce a genuine FAKE (hard override)
+        return {"score": 0.0, "status": "AGENT_ERROR", "severity": "CRITICAL", "verified": False}
 
     def test_integrity_hash_is_sha256(self):
         assert len(self._package(reg_kw=self._fake_reg())["integrity_hash"]) == 64
@@ -513,7 +524,7 @@ class TestFullPipeline:
     def test_fake_scan_packages_evidence(self):
         r = run_scan(
             make_visual(), make_ocr(nafdac="FAKE-999"),
-            make_reg(score=0.0, status="NOT_FOUND", severity="CRITICAL", verified=False),
+            make_reg(score=0.0, status="AGENT_ERROR", severity="CRITICAL", verified=False),
             gps_coordinates=GPS, purchase_channel="open_market",
         )
         assert r["verdict"] == "FAKE"
@@ -578,16 +589,27 @@ class TestFailsafeAndEdgeCases:
     def test_system_never_authentic_on_full_failure(self):
         assert run_scan(None, None, None)["verdict"] != "AUTHENTIC"
 
-    def test_reg_override_beats_perfect_visual_ocr(self):
-        """Even with visual=1.0 and OCR=perfect, NOT_FOUND must force FAKE."""
+    def test_agent_error_override_beats_perfect_visual_ocr(self):
+        """Even with visual=1.0 and OCR=perfect, AGENT_ERROR must force FAKE."""
+        r = run_scan(
+            make_visual(conf=1.0, sim=1.0),
+            make_ocr(anomaly=0.0),
+            make_reg(score=0.0, status="AGENT_ERROR", severity="CRITICAL", verified=False),
+            gps_coordinates=GPS,
+        )
+        assert r["verdict"] == "FAKE"
+        assert r["override_applied"] is True
+
+    def test_not_found_does_not_override_perfect_signals(self):
+        """NOT_FOUND is a DB gap — strong visual+OCR can still return AUTHENTIC."""
         r = run_scan(
             make_visual(conf=1.0, sim=1.0),
             make_ocr(anomaly=0.0),
             make_reg(score=0.0, status="NOT_FOUND", severity="CRITICAL", verified=False),
             gps_coordinates=GPS,
         )
-        assert r["verdict"] == "FAKE"
-        assert r["override_applied"] is True
+        assert r["verdict"] in ("AUTHENTIC", "SUSPICIOUS")
+        assert r["override_applied"] is False
 
     def test_no_gps_does_not_crash(self):
         r = run_scan(make_visual(), make_ocr(), make_reg(), gps_coordinates=None)
