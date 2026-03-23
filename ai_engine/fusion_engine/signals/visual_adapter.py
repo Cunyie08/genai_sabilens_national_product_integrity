@@ -49,6 +49,7 @@ SCALABILITY NOTES:
 
 from datetime import datetime, timezone
 from ai_engine.fusion_engine.config.thresholds import LOGO_MATCH_FLOOR_THRESHOLD
+from ai_engine.visual.vision_engine import similarity
 
 def adapt(visual_output: dict) -> dict:
     """
@@ -60,8 +61,8 @@ def adapt(visual_output: dict) -> dict:
     Returns:
         FusionSignal dict with all fields fusion_engine.run_fusion() needs.
     """
-    confidence      = float(visual_output.get("confidence",        0.0))
-    raw_similarity  = float(visual_output.get("Visual Similarity", 0.0))
+    confidence      = min(float(visual_output.get("confidence",        0.0)), 1.0)
+    raw_similarity  = min(float(visual_output.get("Visual Similarity", 0.0)), 1.0)
     damage_score    = float(visual_output.get("damage_score",      0.1))
     # Default 60.0 (sharp) preserves backward compat with pre-update visual ouputs
     blur_value      = float(visual_output.get("blur_value",        60.0))
@@ -121,11 +122,11 @@ def validate(visual_output: dict) -> list[str]:
         )
 
     confidence = visual_output.get("confidence", -1)
-    if not isinstance(confidence, (int, float)) or not (0.0 <= float(confidence) <= 1.0):
+    if not isinstance(confidence, (int, float)) or not (0.0 <= float(confidence) <= 1.001):
         texts.append(f"'confidence' must be float in [0.0, 1.0], got: {confidence!r}")
 
     similarity = visual_output.get("Visual Similarity", -1)
-    if not isinstance(similarity, (int, float)) or not (0.0 <= float(similarity) <= 1.0):
+    if not isinstance(similarity, (int, float)) or not (0.0 <= float(similarity) <= 1.001):
         texts.append(f"'Visual Similarity' must be float in [0.0, 1.0], got: {similarity!r}")
 
     verdict = visual_output.get("verdict", "")
