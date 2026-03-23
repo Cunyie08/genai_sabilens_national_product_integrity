@@ -1,5 +1,4 @@
 """
-
 Coordinates Vision, OCR, Regulatory, and Fusion
 for every product label scan in SabiLens.
 
@@ -9,75 +8,29 @@ RESPONSIBILITY OF THIS FILE:
   Collect signals from Visual, OCR, Regulatory and hand them to Fusion.
   That is all.
 
-WHAT THIS FILE DOES NOT DO:
-  - Score signals          -> fusion's job (fusion_engine/core/fusion_engine.py)
-  - Apply weights          -> fusion's job (fusion_engine/config/weights.py)
-  - Apply overrides        -> fusion's job (fusion_engine/signals/rag_adapter.py)
-  - Map verdicts           -> fusion's job (fusion_engine/core/decision_classifier.py)
-  - Package evidence       -> fusion's job (fusion_engine/core/evidence_packager.py)
-
-CALL SEQUENCE PER SCAN (parallel execution):
-  Worker A │  _run_ocr_multi()  ──► category resolution ──► _run_regulatory()
-  Worker B │  _run_vision_multi() (runs concurrently with OCR + Regulatory)
-           │
-           └─► _run_fusion()  (after all three signals are collected)
-
-INTEGRATION STATUS:
-  Visual     -> REAL  (VisualPipeline.analyze())
-  OCR        -> REAL  (ocr_pipeline.run_pipeline())
-  Regulatory -> REAL  (NAFDACVerificationAgent.verify())
-  Fusion     -> REAL  (fusion_engine.main.run_scan())
-
-MOCK FALLBACK:
-  If any real module raises an exception, _run_*() catches it,
-  logs a WARNING, and returns a safe mock signal with mocked=True.
-  This keeps the pipeline alive for partial scans (e.g. no camera access).
-  fusion receives the mock and adjusts weights / logs it in the evidence package.
-
-SUBCATEGORY MAPPING:
-  Regulatory(RAG)'s check_alignment compares scanned_category against the NAFDAC registered
-  category string (e.g. "Cereals and Cereal Products"). The orchestrator maps
-  product-level descriptions to NAFDAC category strings via NAFDAC_CATEGORY_MAP
-  before calling regulatory. If no mapping exists, the raw string is passed through and
-  Regulatory(RAG)'s fallback semantic search handles it.
+SINGLE CHROMADB INSTANCE:
+  The regulatory agent owns the only ChromaDB client and ProductRetriever.
+  The OCR pipeline receives the retriever as an argument for two-pass NAFDAC
+  correction. It never creates its own ChromaDB client.
+  This prevents double-loading when OCR and Regulatory run in parallel threads.
 
 CATEGORY FALLBACK CHAIN (when frontend sends category="unknown"):
-    0. DB lookup: after OCR resolves the NAFDAC number, query products->product_categories
-        by nafdac_number. If found, this category wins outright (no further fallback needed).
-        Provided to scan() as an optional category_resolver callable so the AI engine
-        stays DB-agnostic.
-    1. Use scanned_category from frontend if it maps to a known NAFDAC category.
-    2. If scanned_category is "unknown" or unmapped, try OCR's detected brand name
-        (e.g. "Vaseline" -> maps to "Cosmetics").
-    3. If brand is also unknown, pass "unknown" through to regulatory — the agent
-        will attempt semantic resolution and return SUBCATEGORY_MISMATCH (soft warning,
-        not a hard FAKE override).
-
-
-Usage:
-    orchestrator = ScanOrchestrator()                        # once at startup; loads ChromaDB + models
-
-    result = orchestrator.scan(
-        image_path       = "/path/to/product_label.jpg",
-        nafdac_no        = "A8-4114",
-        scanned_category = "corn flakes",
-        gps_coordinates  = {"lat": 6.5244, "lng": 3.3792, "accuracy": 8.5},
-        purchase_channel = "open_market",
-    )
-    print(result.final_verdict)    # AUTHENTIC | SUSPICIOUS | FAKE
-    print(result.final_score)      # 0.0-1.0
-    print(result.action)           # BUY | CAUTION | DO NOT BUY
-    print(result.simple_instruction) # voice-first instruction
-
+  0. DB lookup via category_resolver callable (backend-injected, DB-agnostic).
+  1. Frontend scanned_category if it maps to a known NAFDAC category.
+  2. OCR-detected brand name (e.g. "Vaseline" -> "Cosmetics").
+  3. Visual product match (e.g. "vaseline_intensive_care" -> "Cosmetics").
+  4. Pass "unknown" to regulatory - agent uses semantic search (soft warn only).
 """
-
 
 import logging
 import sys
 import os
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Optional
+
 from ai_engine.agent.verification_agent import NAFDACVerificationAgent
 from ai_engine.fusion_engine.main import run_scan
 from ai_engine.orchestrator.pipeline import (
@@ -90,176 +43,151 @@ logger = logging.getLogger("ScanOrchestrator")
 
 
 # NAFDAC Category Map 
-# Maps human-readable product descriptions to NAFDAC registered category strings.
-# Regulatory's check_alignment tool compares the scanned category against the registered
-# category in the NAFDAC database - these must match the database's own strings.
-#
-# TO ADD A NEW PRODUCT: append a (keyword, nafdac_category) pair.
-# Keywords are matched case-insensitively as substrings of the scanned_category.
 
 NAFDAC_CATEGORY_MAP: dict = {
-    # Cereals & Grains
-    "corn flakes":              "Cereals and Cereal Products",
-    "cornflakes":               "Cereals and Cereal Products",
-    "coco pops":                "Cereals and Cereal Products",
-    "go grains":                "Cereals and Cereal Products",
-    "pasta":                    "Cereal Products",
-    "spaghetti":                "Cereal Products",
-    "noodles":                  "Cereal Products",
-    # Oils & Fats
-    "vegetable oil":            "Edible Oils and Fats",
-    "soya oil":                 "Edible Oils and Fats",
-    "cooking oil":              "Edible Oils and Fats",
-    # Sweeteners
-    "sugar":                    "Food Additives",
-    # Preserved foods
-    "tomato paste":             "Preserved Fruits and Vegetables",
-    "tomato":                   "Preserved Fruits and Vegetables",
-    # Condiments & seasonings
-    "chicken seasoning":        "Condiments/Spices/Seasonings",
-    "seasoning":                "Condiments/Spices/Seasonings",
-    "spice":                    "Condiments/Spices/Seasonings",
-    # Beverages
-    "tea":                      "Non-Alcoholic Beverages",
-    "lipton":                   "Non-Alcoholic Beverages",
-    "juice":                    "Non-Alcoholic Beverages",
-    "water":                    "Non-Alcoholic Beverages",
-    # Cosmetics & personal care
-    "body spray":               "Cosmetics",
-    "antiperspirant":           "Cosmetics",
-    "deodorant":                "Cosmetics",
-    "toothpaste":               "Cosmetics",
-    "toilet roll":              "Cosmetics",
-    "tissue":                   "Cosmetics",
-    "vaseline":                 "Cosmetics",
-    "petroleum jelly":          "Cosmetics",
-    "lotion":                   "Cosmetics",
-    "cream":                    "Cosmetics",
-    "soap":                     "Cosmetics",
-    "gel":                      "Cosmetics",
-    # Common brand names (fallback when frontend sends brand instead of category)
-    "kellogg":                  "Cereals and Cereal Products",
-    "indomie":                  "Cereal Products",
-    "golden terra":             "Edible Oils and Fats",
-    "unilever":                 "Cosmetics",
+    "corn flakes":                      "Cereals and Cereal Products",
+    "cornflakes":                       "Cereals and Cereal Products",
+    "coco pops":                        "Cereals and Cereal Products",
+    "go grains":                        "Cereals and Cereal Products",
+    "pasta":                            "Cereal Products",
+    "spaghetti":                        "Cereal Products",
+    "noodles":                          "Cereal Products",
+    "vegetable oil":                    "Edible Oils and Fats",
+    "soya oil":                         "Edible Oils and Fats",
+    "cooking oil":                      "Edible Oils and Fats",
+    "sugar":                            "Food Additives",
+    "tomato paste":                     "Preserved Fruits and Vegetables",
+    "tomato":                           "Preserved Fruits and Vegetables",
+    "chicken seasoning":                "Condiments/Spices/Seasonings",
+    "seasoning":                        "Condiments/Spices/Seasonings",
+    "spice":                            "Condiments/Spices/Seasonings",
+    "tea":                              "Non-Alcoholic Beverages",
+    "lipton":                           "Non-Alcoholic Beverages",
+    "juice":                            "Non-Alcoholic Beverages",
+    "water":                            "Non-Alcoholic Beverages",
+    "body spray":                       "Cosmetics",
+    "antiperspirant":                   "Cosmetics",
+    "deodorant":                        "Cosmetics",
+    "toothpaste":                       "Cosmetics",
+    "toilet roll":                      "Cosmetics",
+    "tissue":                           "Cosmetics",
+    "vaseline":                         "Cosmetics",
+    "petroleum jelly":                  "Cosmetics",
+    "lotion":                           "Cosmetics",
+    "cream":                            "Cosmetics",
+    "soap":                             "Cosmetics",
+    "gel":                              "Cosmetics",
+    "kellogg":                          "Cereals and Cereal Products",
+    "indomie":                          "Cereal Products",
+    "golden terra":                     "Edible Oils and Fats",
+    "unilever":                         "Cosmetics",
+    # Visual pipeline product match names
+    "vaseline_intensive_care":          "Cosmetics",
+    "vaseline_eventone_b3_lotion":      "Cosmetics",
+    "vaseline_blueseal":                "Cosmetics",
+    "axe_bodyspray":                    "Cosmetics",
+    "dove_cream_bar":                   "Cosmetics",
+    "dove_coconut_jasmine":             "Cosmetics",
+    "dove_pear_aloevera":               "Cosmetics",
+    "closeup_complete_fresh":           "Cosmetics",
+    "pepsodent":                        "Cosmetics",
+    "familia_2_toilet_rolls":           "Cosmetics",
+    "rexona_antiperspirant_gel":        "Cosmetics",
+    "kelloggs_cornflakes":              "Cereals and Cereal Products",
+    "kelloggs_coco_pops":               "Cereals and Cereal Products",
+    "kelloggs_go_grains":               "Cereals and Cereal Products",
+    "golden_penny_pasta_spaghettini":   "Cereal Products",
+    "indomie_chicken_flavor":           "Cereal Products",
+    "golden_terra_soya_oil":            "Edible Oils and Fats",
+    "sedoso_vegetable_oil":             "Edible Oils and Fats",
+    "dangote_sugar_refined":            "Food Additives",
+    "peppe_terra_cooking_tomato_paste": "Preserved Fruits and Vegetables",
+    "terra_chicken_seasoning":          "Condiments/Spices/Seasonings",
+    "lipton_yellow_label_tea":          "Non-Alcoholic Beverages",
 }
 
 
 def _map_to_nafdac_category(scanned_category: str) -> str:
-    """
-    Map a product name or description to the NAFDAC registered category string.
-
-    Tries substring matching (case-insensitive) against NAFDAC_CATEGORY_MAP.
-    If no match is found, the original string is returned and regulatory's semantic
-    search fallback will attempt to resolve it.
-
-    Args:
-        scanned_category: Product description from client or OCR extraction.
-
-    Returns:
-        NAFDAC registered category string, or scanned_category if unmapped.
-    """
     if not scanned_category or scanned_category.strip().lower() in ("", "unknown"):
         return "unknown"
-
     lower = scanned_category.lower().strip()
     for keyword, nafdac_cat in NAFDAC_CATEGORY_MAP.items():
         if keyword in lower:
-            logger.debug(
-                "Category mapped: '%s' -> '%s' (matched keyword: '%s')",
-                scanned_category, nafdac_cat, keyword,
-            )
             return nafdac_cat
-
-    logger.warning(
-        "No NAFDAC category mapping found for '%s'. "
-        "Passing through - regulatory semantic search will attempt resolution.",
-        scanned_category,
-    )
     return scanned_category
 
-def _resolve_category(scanned_category: str, ocr_signal: AgentSignal) -> str:
-    """
-    Resolve the best available category hint to pass to regulatory.
 
-    Fallback chain:
-      1. Use scanned_category from frontend if it maps to a known NAFDAC category.
-      2. If unknown/unmapped, try OCR's detected brand name.
-      3. If brand also unknown, return "unknown" - regulatory will soft-warn only
-         (SUBCATEGORY_MISMATCH no longer hard-forces FAKE).
-
-    Args:
-        scanned_category: Category string from the consumer app request.
-        ocr_signal:       OCR AgentSignal; may contain brand_detected in payload.
-
-    Returns:
-        Best available NAFDAC category string.
-    """
-    # Try the frontend-provided category
+def _resolve_category(
+    scanned_category: str,
+    ocr_signal:       AgentSignal,
+    vision_signal:    AgentSignal = None,
+) -> str:
+    # Step 1: frontend category
     mapped = _map_to_nafdac_category(scanned_category)
     if mapped and mapped.lower() != "unknown":
         return mapped
 
-    # Fall back to OCR-detected brand name
+    # Step 2: OCR brand
     brand = (
-        ocr_signal.payload
-        .get("brand_anomaly", {})
-        .get("brand_detected")
-        or ocr_signal.payload
-        .get("metadata", {})
-        .get("brand_detected")
+        ocr_signal.payload.get("brand_anomaly", {}).get("brand_detected")
+        or ocr_signal.payload.get("metadata", {}).get("brand_detected")
     )
-
     if brand:
         brand_mapped = _map_to_nafdac_category(brand)
         if brand_mapped.lower() != brand.lower():
-            # _map_to_nafdac_category returned a canonical category (not the raw brand)
-            logger.info(
-                "Category resolved from OCR brand: '%s' -> '%s'",
-                brand, brand_mapped,
-            )
+            logger.info("Category resolved from OCR brand: '%s' -> '%s'", brand, brand_mapped)
             return brand_mapped
-        # Brand didn't map to a known category — try it raw anyway
-        logger.info(
-            "Category fallback: using raw OCR brand '%s' (no canonical mapping found).",
-            brand,
-        )
+        logger.info("Category fallback: using raw OCR brand '%s'.", brand)
         return brand
 
-    # Step 3: nothing worked — pass unknown through; reg_adapter will soft-warn
-    logger.warning(
-        "Category could not be resolved from frontend ('%s') or OCR brand. "
-        "Passing 'unknown' to regulatory — expect SUBCATEGORY_MISMATCH soft warning.",
-        scanned_category,
-    )
+    # Step 3: A1 visual product match
+    if vision_signal and not vision_signal.mocked:
+        product_matched = vision_signal.payload.get("product", "")
+        if product_matched:
+            vision_mapped = _map_to_nafdac_category(product_matched)
+            if vision_mapped.lower() != product_matched.lower():
+                logger.info(
+                    "Category resolved from visual match: '%s' -> '%s'",
+                    product_matched, vision_mapped,
+                )
+                return vision_mapped
+
+    logger.warning("Category unresolved. Passing 'unknown' to regulatory.")
     return "unknown"
+
 
 class ScanOrchestrator:
     """
-    Collects signals from visual, ocr, regulatory and hands them to fusion.
-    Creates one NAFDACVerificationAgent at startup (expensive: loads ChromaDB
-    and sentence-transformer model once). Reused across all scans.
+    Collects signals from visual, OCR, regulatory and hands them to fusion.
+
+    KEY DESIGN: Only one ChromaDB instance exists in the entire pipeline.
+    It is owned by the regulatory agent and shared with OCR via self._retriever.
     """
 
     def __init__(self):
-
         logger.info("Initialising ScanOrchestrator - loading REG agent and Visual pipeline...")
+
         self._regulatory_agent = NAFDACVerificationAgent()
 
-        # Pre-load VisualPipeline so embeddings.pkl is unpickled once at startup,
-        # not on every scan request. Falls back to per-scan instantiation if the
-        # visual module is not yet importable.
+        # Share the retriever from the regulatory agent with OCR.
+        # This is the ONLY ProductRetriever / ChromaDB client in the pipeline.
+        self._retriever = getattr(self._regulatory_agent, 'retriever', None)
+        if self._retriever:
+            logger.info("ProductRetriever shared from regulatory agent.")
+        else:
+            logger.warning(
+                "Could not access ProductRetriever from regulatory agent. "
+                "Two-pass NAFDAC OCR correction disabled (strict extraction only)."
+            )
+
+        # Pre-load VisualPipeline at startup
         try:
-            import sys as _sys, os as _os
-            _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', 'visual'))
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'visual'))
             from vision_engine.pipeline.visual_pipeline import VisualPipeline as _VP
             self._visual_pipeline = _VP()
             logger.info("VisualPipeline pre-loaded at startup.")
         except Exception:
-            logger.warning(
-                "VisualPipeline pre-load failed; will attempt instantiation per scan.",
-                exc_info=True,
-            )
+            logger.warning("VisualPipeline pre-load failed.", exc_info=True)
             self._visual_pipeline = None
 
         logger.info("ScanOrchestrator ready.")
@@ -272,35 +200,12 @@ class ScanOrchestrator:
         gps_coordinates:   dict,
         purchase_channel:  str,
         image_paths:       Optional[list] = None,
-        receipt_image:     Optional[str] = None,
-        storefront_image:  Optional[str] = None,
+        receipt_image:     Optional[str]  = None,
+        storefront_image:  Optional[str]  = None,
         damage_score:      float = 0.0,
         category_resolver: Optional[Callable[[str], Optional[str]]] = None,
     ) -> PipelineResult:
-        """
-        Run the full Visual -> OCR -> Regulatory -> Fusion scan pipeline.
 
-        Args:
-            image_path:        Primary image path (front of product). Always required.
-            image_paths:       All image paths [front, back, side, detail]. When provided,
-                               OCR and Vision process all images for a richer signal.
-            nafdac_no:         NAFDAC number. Can be empty (OCR will attempt extraction).
-            scanned_category:  Product type hint mapped to NAFDAC category before regulatory.
-            gps_coordinates:   {"lat": float, "lng": float, "accuracy": float}
-            purchase_channel:  "open_market" | "supermarket" | "pharmacy" | etc.
-            receipt_image:     Optional extra image for evidence package.
-            storefront_image:  Optional extra image for evidence package.
-            damage_score:      Scan quality from vision DamageDetector — passed to ocr.
-            category_resolver: Optional sync callable(nafdac_no) -> category_name | None.
-                               Provided by the backend layer to look up the product category
-                               from the products/product_categories tables. Called after OCR
-                               resolves the effective NAFDAC number. Its result takes priority
-                               over both the frontend-supplied category and the OCR brand fallback.
-
-        Returns:
-            PipelineResult with all verdict fields from fusion's ScanResult.
-        """
-        # Normalise image list — primary is always first
         all_image_paths = list(image_paths) if image_paths else [image_path]
         all_image_paths = [p for p in all_image_paths if p and p != "EXPLAIN_MODE_NO_IMAGE"]
         if not all_image_paths:
@@ -311,75 +216,45 @@ class ScanOrchestrator:
             nafdac_no, scanned_category, purchase_channel, len(all_image_paths), image_path,
         )
 
-        # Launch OCR and Vision in parallel — they are fully independent pipelines.
-        # OCR must finish before Regulatory can start (NAFDAC number extraction),
-        # but Vision has no such dependency. The pool keeps both workers busy:
-        #   Worker A: OCR (front + back images)
-        #   Worker B: Vision (front + back images)
-        # As soon as OCR finishes, Worker A picks up Regulatory while Worker B
-        # continues Vision. Total latency ≈ T_ocr + max(T_reg, T_vision_remainder).
         _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="scan-worker")
 
-        ocr_future    = _pool.submit(self._run_ocr_multi, all_image_paths, damage_score)
+        # Pass shared retriever to OCR - no new ChromaDB instance created
+        ocr_future    = _pool.submit(
+            self._run_ocr_multi, all_image_paths, damage_score, self._retriever
+        )
         vision_future = _pool.submit(self._run_vision_multi, all_image_paths)
 
-        # Block on OCR — needed to extract NAFDAC number and resolve category.
         ocr_signal = ocr_future.result()
 
-        # Use OCR's extracted NAFDAC number if caller did not pre-extract one
         effective_nafdac = nafdac_no or (
-            ocr_signal.payload
-            .get("metadata", {})
-            .get("nafdac_number") or ""
+            ocr_signal.payload.get("metadata", {}).get("nafdac_number") or ""
         )
 
-        # Step 0: DB lookup — highest-priority category source.
-        # The backend injects category_resolver so the AI engine stays DB-agnostic.
-        # If the NAFDAC number is in the products table, use its registered category
-        # directly and skip the keyword/brand fallback chain entirely.
+        # DB category lookup (highest priority)
         if category_resolver and effective_nafdac:
             try:
                 db_category = category_resolver(effective_nafdac)
                 if db_category:
                     logger.info(
-                        "Category from DB lookup | nafdac_no='%s' -> '%s' "
-                        "(overrides frontend='%s')",
-                        effective_nafdac, db_category, scanned_category,
+                        "Category from DB | nafdac='%s' -> '%s'",
+                        effective_nafdac, db_category,
                     )
                     scanned_category = db_category
-                else:
-                    logger.debug(
-                        "DB lookup returned no category for nafdac_no='%s'. "
-                        "Falling through to keyword/brand resolution.",
-                        effective_nafdac,
-                    )
             except Exception:
-                logger.warning(
-                    "category_resolver raised an exception for nafdac_no='%s'. "
-                    "Falling through to keyword/brand resolution.",
-                    effective_nafdac,
-                    exc_info=True,
-                )
+                logger.warning("category_resolver failed.", exc_info=True)
 
-        # Resolve best category hint (DB result -> frontend -> OCR brand -> unknown)
-        nafdac_category = _resolve_category(scanned_category, ocr_signal)
+        # Collect vision before category resolution so A1 match available
+        vision_signal   = vision_future.result()
+        nafdac_category = _resolve_category(scanned_category, ocr_signal, vision_signal)
         logger.info(
             "Category resolved | frontend='%s' -> regulatory='%s'",
             scanned_category, nafdac_category,
         )
 
-        # OCR worker is now free — start Regulatory immediately.
-        # Vision is still running concurrently on the other worker.
-        reg_future = _pool.submit(self._run_regulatory, effective_nafdac, nafdac_category)
-
-        # Collect Vision and Regulatory; whichever finishes first doesn't block the other.
-        vision_signal     = vision_future.result()
+        reg_future        = _pool.submit(self._run_regulatory, effective_nafdac, nafdac_category)
         regulatory_signal = reg_future.result()
         _pool.shutdown(wait=False)
 
-        # Hand everything to fusion 
-        # fusion owns: weights, overrides, damage logic, verdict, evidence packaging.
-        # The orchestrator passes raw payloads and context - nothing more.
         fusion_signal = self._run_fusion(
             vision_signal     = vision_signal,
             ocr_signal        = ocr_signal,
@@ -390,7 +265,6 @@ class ScanOrchestrator:
             storefront_image  = storefront_image,
         )
 
-        # Assemble PipelineResult; all verdict fields from fusion, never computed here
         fusion = fusion_signal.payload
 
         return PipelineResult(
@@ -403,7 +277,7 @@ class ScanOrchestrator:
             final_verdict      = fusion.get("verdict",            "FAKE"),
             final_score        = fusion.get("final_score",        0.0),
             final_severity     = fusion.get("severity",           "CRITICAL"),
-            action             = fusion.get("action",             "DO NOT BUY THIS PRODUCT. IT IS A COUNTERFEIT."),
+            action             = fusion.get("action",             "DO NOT BUY"),
             simple_instruction = fusion.get("simple_instruction", ""),
             atlas_instruction  = fusion.get("atlas_instruction",  ""),
             summary            = fusion.get("atlas_summary",      ""),
@@ -421,57 +295,20 @@ class ScanOrchestrator:
             ],
         )
 
-    # Agent runners 
-    # Each runner packages a signal into an AgentSignal envelope.
-    # When a module is not yet integrated, mocked=True and a safe mock payload is used.
-    # Switching from mock to real requires only changing the payload - nothing else.
+    def _run_ocr_multi(self, image_paths: list, damage_score: float, retriever=None) -> AgentSignal:
+        print(f"DEBUG retriever type: {type(retriever).__name__}", flush=True) # ADD THIS
 
-    def _run_ocr(self, image_path: str, damage_score: float) -> AgentSignal:
-        """Run OCR on a single image. Falls back to mock on any exception."""
-        try:
-            from ocr_linguistic.pipeline import run_pipeline as ocr_run_pipeline
-
-            logger.info("OCR | image=%s | damage_score=%s", image_path, damage_score)
-            result = ocr_run_pipeline(image_path, damage_score)
-
-            logger.info(
-                "OCR complete | nafdac=%s | anomaly_score=%s",
-                result.get("metadata", {}).get("nafdac_number"),
-                result.get("final_text_anomaly_score"),
-            )
-            return AgentSignal(
-                agent_id   = "ocr",
-                available  = True,
-                confidence = 1.0 - result.get("final_text_anomaly_score", 0.5),
-                mocked     = False,
-                payload    = result,
-            )
-
-        except Exception:
-            logger.warning("OCR failed - using mock signal.", exc_info=True)
-            return self._mock_ocr_signal()
-
-    def _run_ocr_multi(self, image_paths: list, damage_score: float) -> AgentSignal:
-        """
-        Run OCR on all provided images and merge results.
-
-        Merge strategy:
-        - Prefer the result that has a NAFDAC number extracted.
-        - Among candidates with equal NAFDAC presence, prefer lower anomaly score
-          (cleaner image to more trustworthy reading).
-        Falls back to mock if every image fails OCR.
-        """
         try:
             from ocr_linguistic.pipeline import run_pipeline as ocr_run_pipeline
         except Exception:
-            logger.warning("OCR import failed - using mock signal.", exc_info=True)
+            logger.warning("OCR import failed.", exc_info=True)
             return self._mock_ocr_signal()
 
         results = []
         for path in image_paths:
             try:
                 logger.info("OCR | image=%s | damage_score=%s", path, damage_score)
-                r = ocr_run_pipeline(path, damage_score)
+                r = ocr_run_pipeline(path, damage_score, retriever=retriever)
                 results.append(r)
                 logger.info(
                     "OCR image done | nafdac=%s | anomaly=%.3f",
@@ -479,16 +316,17 @@ class ScanOrchestrator:
                     r.get("final_text_anomaly_score", 0.5),
                 )
             except Exception:
-                logger.warning("OCR failed for %s - skipping.", path, exc_info=True)
+                logger.warning("OCR failed for %s.", path, exc_info=True)
 
         if not results:
             return self._mock_ocr_signal()
+        
 
-        # Pick best result: NAFDAC number presence first, then lowest anomaly score
+
+
         def _score(r):
             has_nafdac = 1 if r.get("metadata", {}).get("nafdac_number") else 0
-            anomaly    = r.get("final_text_anomaly_score", 0.5)
-            return (has_nafdac, -anomaly)   # higher is better
+            return (has_nafdac, -r.get("final_text_anomaly_score", 0.5))
 
         best = max(results, key=_score)
         logger.info(
@@ -506,17 +344,9 @@ class ScanOrchestrator:
         )
 
     def _run_regulatory(self, nafdac_no: str, nafdac_category: str) -> AgentSignal:
-        """
-        Run regulatory NAFDAC ReAct agent. Always real - never mocked by design.
-        On agent failure, returns AGENT_ERROR payload so Fusion's hard override fires.
-        """
         try:
-            logger.info(
-                "Regulatory | nafdac_no=%s | category=%s",
-                nafdac_no, nafdac_category,
-            )
+            logger.info("Regulatory | nafdac_no=%s | category=%s", nafdac_no, nafdac_category)
             verdict = self._regulatory_agent.verify(nafdac_no, nafdac_category)
-
             logger.info(
                 "Regulatory complete | status=%s | score=%s | fallback=%s",
                 verdict.status_code, verdict.verification_score, verdict.fallback_used,
@@ -550,12 +380,8 @@ class ScanOrchestrator:
                     ],
                 },
             )
-
         except Exception:
-            logger.error(
-                "Regulatory agent failed - returning AGENT_ERROR failsafe.",
-                exc_info=True,
-            )
+            logger.error("Regulatory agent failed.", exc_info=True)
             return AgentSignal(
                 agent_id   = "regulatory",
                 available  = False,
@@ -566,8 +392,8 @@ class ScanOrchestrator:
                     "verification_score": 0.0,
                     "status_code":        "AGENT_ERROR",
                     "severity":           "CRITICAL",
-                    "summary":            "Regulatory agent error - regulatory verification unavailable.",
-                    "detail":             "The NAFDAC verification agent encountered an error. System fails closed.",
+                    "summary":            "Regulatory agent error.",
+                    "detail":             "NAFDAC verification unavailable. System fails closed.",
                     "expiry_check":       None,
                     "alignment":          None,
                     "matched_record":     None,
@@ -578,63 +404,19 @@ class ScanOrchestrator:
                 },
             )
 
-    def _run_vision(self, image_path: str) -> AgentSignal:
-        """Run Visual pipeline on a single image. Falls back to mock on any exception."""
-        try:
-            pipeline = self._visual_pipeline
-            if pipeline is None:
-                import sys, os
+    def _run_vision_multi(self, image_paths: list) -> AgentSignal:
+        pipeline = self._visual_pipeline
+        if pipeline is None:
+            try:
                 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'visual'))
                 from vision_engine.pipeline.visual_pipeline import VisualPipeline
                 pipeline = VisualPipeline()
                 self._visual_pipeline = pipeline
-
-            logger.info("Vision | image=%s", image_path)
-            result = pipeline.analyze(image_path)
-
-            logger.info(
-                "Vision complete | product=%s | similarity=%s | "
-                "confidence=%s | verdict=%s",
-                result.get("product"),
-                result.get("Visual Similarity"),
-                result.get("confidence"),
-                result.get("verdict"),
-            )
-            return AgentSignal(
-                agent_id   = "vision",
-                available  = True,
-                confidence = result.get("confidence", 0.0),
-                mocked     = False,
-                payload    = result,
-            )
-
-        except Exception:
-            logger.warning("Vision failed, using mock signal.", exc_info=True)
-            return self._mock_vision_signal()
-
-    def _run_vision_multi(self, image_paths: list) -> AgentSignal:
-        """
-        Run Visual pipeline on all provided images and return the best result.
-
-        Best = highest confidence score. A real high-confidence result on any
-        image beats a low-confidence result on the primary image.
-        Falls back to mock if every image fails vision.
-        """
-        # Use the singleton pre-loaded at startup; fall back to fresh instantiation
-        # if startup loading failed (e.g. visual module not yet installed).
-        pipeline = self._visual_pipeline
-        if pipeline is None:
-            try:
-                import sys, os
-                sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'visual'))
-                from vision_engine.pipeline.visual_pipeline import VisualPipeline
-                pipeline = VisualPipeline()
-                self._visual_pipeline = pipeline   # cache for subsequent scans
             except Exception:
-                logger.warning("Vision import failed - using mock signal.", exc_info=True)
+                logger.warning("Vision import failed.", exc_info=True)
                 return self._mock_vision_signal()
 
-        best_result = None
+        best_result     = None
         best_confidence = -1.0
 
         for path in image_paths:
@@ -648,17 +430,15 @@ class ScanOrchestrator:
                 )
                 if conf > best_confidence:
                     best_confidence = conf
-                    best_result = result
+                    best_result     = result
             except Exception:
-                logger.warning("Vision failed for %s - skipping.", path, exc_info=True)
+                logger.warning("Vision failed for %s.", path, exc_info=True)
 
         if best_result is None:
             return self._mock_vision_signal()
 
-        logger.info(
-            "Vision multi complete | %d images | best confidence=%.3f",
-            len(image_paths), best_confidence,
-        )
+        logger.info("Vision multi complete | %d images | best confidence=%.3f",
+                    len(image_paths), best_confidence)
         return AgentSignal(
             agent_id   = "vision",
             available  = True,
@@ -676,16 +456,7 @@ class ScanOrchestrator:
         purchase_channel:  str,
         receipt_image:     Optional[str],
         storefront_image:  Optional[str],
-        
     ) -> AgentSignal:
-
-        """
-        Hand all three signals to fusion. Contains NO scoring logic.
-        All weighting, override, damage, and verdict logic lives in fusion.
-        """
-        from ai_engine.fusion_engine.main import run_scan
-
-
         logger.info("Fusion | starting...")
         scan_result = run_scan(
             visual_output    = vision_signal.payload,
@@ -696,13 +467,10 @@ class ScanOrchestrator:
             receipt_image    = receipt_image,
             storefront_image = storefront_image,
         )
-
         logger.info(
             "Fusion complete | verdict=%s | score=%s | status=%s | weight_mode=%s",
-            scan_result.get("verdict"),
-            scan_result.get("final_score"),
-            scan_result.get("status"),
-            scan_result.get("weight_mode"),
+            scan_result.get("verdict"), scan_result.get("final_score"),
+            scan_result.get("status"), scan_result.get("weight_mode"),
         )
         return AgentSignal(
             agent_id   = "fusion",
@@ -712,10 +480,7 @@ class ScanOrchestrator:
             payload    = scan_result,
         )
 
-    # Mock fallbacks
-
     def _mock_ocr_signal(self) -> AgentSignal:
-        """Neutral mock OCR signal, does not bias fusion's verdict."""
         return AgentSignal(
             agent_id   = "ocr",
             available  = True,
@@ -754,34 +519,22 @@ class ScanOrchestrator:
         )
 
     def _mock_vision_signal(self) -> AgentSignal:
-        """
-        Neutral mock vision signal.
-        blur_value=80 -> above damage threshold -> fusion uses BASE weights.
-        """
         return AgentSignal(
             agent_id   = "vision",
             available  = True,
             confidence = MOCK_CONFIDENCE,
             mocked     = True,
             payload    = {
-                "product":           "UNKNOWN - vison not available",
+                "product":           "UNKNOWN - vision not available",
                 "Visual Similarity": MOCK_CONFIDENCE,
                 "damage_score":      0.1,
                 "blur_value":        80.0,
                 "confidence":        MOCK_CONFIDENCE,
                 "verdict":           "Authentic" if MOCK_CONFIDENCE >= 0.75 else "Suspicious",
             },
-        )   
-
-
-
-    # Developer utility
+        )
 
     def explain(self, nafdac_no: str, scanned_category: str) -> str:
-        """
-        Run a full scan with mock visual/ocr (no image needed) and return a formatted
-        plain-text report. For demos and the auditing.
-        """
         result = self.scan(
             image_path       = "EXPLAIN_MODE_NO_IMAGE",
             nafdac_no        = nafdac_no,
@@ -789,83 +542,58 @@ class ScanOrchestrator:
             gps_coordinates  = {"lat": 0.0, "lng": 0.0, "accuracy": 0.0},
             purchase_channel = "unknown",
         )
-
         regulatory_trace = result.regulatory_signal.payload.get("reasoning_trace", [])
         breakdown        = result.breakdown
-
         lines = [
-            "",
-            "SABILENS SCAN - Orchestrator Report",
-            "=" * 60,
-            f"NAFDAC      : {nafdac_no}",
-            f"Category    : {scanned_category}",
-            f"Scan ID     : {result.scan_id}",
-            f"Status      : {result.status}",
-            f"Vision   : {'mocked' if result.vision_signal.mocked else 'real'}",
-            f"OCR      : {'mocked' if result.ocr_signal.mocked else 'real'}",
-            f"Reg      : real (always)",
-            "",
-            "REGULATORY AGENT REASONING",
-            "-" * 40,
+            "", "SABILENS SCAN - Orchestrator Report", "=" * 60,
+            f"NAFDAC    : {nafdac_no}", f"Category  : {scanned_category}",
+            f"Scan ID   : {result.scan_id}", f"Status    : {result.status}",
+            f"Vision    : {'mocked' if result.vision_signal.mocked else 'real'}",
+            f"OCR       : {'mocked' if result.ocr_signal.mocked else 'real'}",
+            "Reg       : real (always)", "", "REGULATORY AGENT REASONING", "-" * 40,
         ]
         for i, step in enumerate(regulatory_trace, 1):
             lines += [
                 f"  Step {i} | {step['action']}",
                 f"    Thought : {step['thought']}",
-                f"    Result  : {step['observation_summary']}",
-                "",
+                f"    Result  : {step['observation_summary']}", "",
             ]
-        lines += [
-            "FUSION BREAKDOWN",
-            "-" * 40,
-        ]
+        lines += ["FUSION BREAKDOWN", "-" * 40]
         for signal, data in breakdown.items():
             lines.append(
-                f"  {signal:<12} score={data.get('raw_score', 'n/a')}  "
-                f"weight={data.get('weight', 'n/a')}  "
-                f"weighted={data.get('weighted', 'n/a')}"
+                f"  {signal:<12} score={data.get('raw_score','n/a')}  "
+                f"weight={data.get('weight','n/a')}  weighted={data.get('weighted','n/a')}"
             )
         lines += [
-            f"  Override applied : {result.override_applied}",
-            f"  Override summary : {result.override_summary or 'None'}",
-            "",
-            "FINAL VERDICT",
-            "-" * 40,
+            f"  Override : {result.override_applied}",
+            f"  Summary  : {result.override_summary or 'None'}", "",
+            "FINAL VERDICT", "-" * 40,
             f"  Verdict    : {result.final_verdict}",
             f"  Score      : {result.final_score}",
             f"  Severity   : {result.final_severity}",
             f"  Action     : {result.action}",
             f"  Instruction: {result.simple_instruction}",
-            f"  Warnings   : {[w.get('type') for w in result.warnings]}",
-            "",
+            f"  Warnings   : {[w.get('type') for w in result.warnings]}", "",
         ]
         return "\n".join(lines)
 
 
-# Test Runner
-
 if __name__ == "__main__":
     import json
-    import os
-    import sys
-    from ai_engine.visual.vision_engine.damage_detection.damage_detector import DamageDetector
 
-    # Pass the left image or side with visual, ocr and regulatory features
     IMAGE = r"C:\Dev\sabilens\ai_engine\visual\test_images\kelloggs_cornflakes_300g+45g_left.jpg"
-    
-    # Get damage_score from visual and pass it to OCR
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'visual'))
+    from vision_engine.damage_detection.damage_detector import DamageDetector
     damage_score = DamageDetector().damage_score(IMAGE)["damage_score"]
 
     orchestrator = ScanOrchestrator()
-
     result = orchestrator.scan(
         image_path       = IMAGE,
-        nafdac_no        = "",           # OCR to extract
+        nafdac_no        = "",
         scanned_category = "corn flakes",
         gps_coordinates  = {"lat": 6.5244, "lng": 3.3792, "accuracy": 8.5},
         purchase_channel = "open_market",
-        damage_score= damage_score,
+        damage_score     = damage_score,
     )
 
     print("\n" + "=" * 60)
@@ -878,12 +606,13 @@ if __name__ == "__main__":
     print(f"  Instruction: {result.simple_instruction}")
     print(f"  Status     : {result.status}")
     print(f"  Scan ID    : {result.scan_id}")
-    print(f"  Visual mocked  : {result.vision_signal.mocked}")
-    print(f"  OCR mocked  : {result.ocr_signal.mocked}")
-    print(f"  Override   : {result.override_applied}")
-    print(f"  Warnings   : {[w.get('type') for w in result.warnings]}")
-    print(f"  damage_score passed to ocr: {damage_score}")
+    print(f"  Vision mocked : {result.vision_signal.mocked}")
+    print(f"  OCR mocked    : {result.ocr_signal.mocked}")
+    print(f"  Override      : {result.override_applied}")
+    print(f"  Warnings      : {[w.get('type') for w in result.warnings]}")
+    print(f"  damage_score  : {damage_score}")
     print("\nBREAKDOWN:")
     for signal, data in result.breakdown.items():
-        print(f"  {signal:<12} score={data.get('raw_score','n/a')}  weight={data.get('weight','n/a')}  weighted={data.get('weighted','n/a')}")
+        print(f"  {signal:<12} score={data.get('raw_score','n/a')}  "
+              f"weight={data.get('weight','n/a')}  weighted={data.get('weighted','n/a')}")
     print("=" * 60)
