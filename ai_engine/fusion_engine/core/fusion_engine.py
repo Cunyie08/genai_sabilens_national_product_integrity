@@ -98,6 +98,28 @@ def run_fusion(visual_signal: dict, ocr_signal: dict, reg_signal: dict) -> dict:
         The image is flagged for saving. No NAFDAC report is generated.
     """
 
+    # Early exit: no product detected in image
+    if visual_signal.get("no_product_detected"):
+        return {
+            "verdict":          "INVALID_IMAGE",
+            "final_score":      0.0,
+            "severity":         "NONE",
+            "confidence_label": "NONE",
+            "rescan_required":  False,
+            "weight_mode":      "REJECTED",
+            "weights_used":     None,
+            "retrieval_path":   None,
+            "override_applied": True,
+            "applied_override": {"source": "VISUAL", "type": "NO_PRODUCT_DETECTED", "reason": "NO_PRODUCT_DETECTED"},
+            "all_overrides":    [],
+            "breakdown":        {},
+            "warnings":         [{"type": "NO_PRODUCT_DETECTED", "message": "Image does not contain a recognisable product label. Please take a clear photo of the product label and try again."}],
+            "atlas_detail":     "",
+            "atlas_summary":    "No product detected in image.",
+            "evidence":         {"product_matched_visual": "NO_PRODUCT_DETECTED", "save_for_retraining": False, "save_reason": None},
+            "timestamp":        datetime.now(timezone.utc).isoformat(),
+        }
+
     # Extract scores (all 0.0-1.0, positive direction) 
     visual_score = float(visual_signal.get("fusion_score", 0.0))
     ocr_score = float(ocr_signal.get("fusion_score", 0.0))

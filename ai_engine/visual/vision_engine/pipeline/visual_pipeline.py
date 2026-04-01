@@ -2,9 +2,9 @@
 Orchestrates the full Visual pipeline for one product scan.
 
 PIPELINE:
-  1. RegionDetector  → crops brand_logo region from image (YOLO)
-  2. SimilarityEngine → compares logo crop against reference embeddings
-  3. DamageDetector  → measures scan quality (Laplacian blur)
+  1. RegionDetector  : crops brand_logo region from image (YOLO)
+  2. SimilarityEngine : compares logo crop against reference embeddings
+  3. DamageDetector  : measures scan quality (Laplacian blur)
   4. Fuse into confidence score and return structured output
 
 OUTPUT CONTRACT (what Fusion Engine expects):
@@ -93,6 +93,7 @@ class VisualPipeline:
 
         # Similarity comparison against reference embeddings
         similarity = self.sim_engine.compare(logo_input)
+        raw_similarity = similarity["similarity"]
 
         # Scan quality measurement
         # damage_result is now a dict: {"damage_score": float, "blur_value": float}
@@ -100,15 +101,30 @@ class VisualPipeline:
         damage_score  = damage_result["damage_score"]   # 0.1 | 0.4 | 0.8
         blur_value    = damage_result["blur_value"]     # raw Laplacian - passed to Fusion
 
+
+        MINIMUM_PRODUCT_SIMILARITY = 0.35  # below this = not a product image
+
+        if raw_similarity < MINIMUM_PRODUCT_SIMILARITY:
+            return {
+                "product":           "NO_PRODUCT_DETECTED",
+                "Visual Similarity": raw_similarity,
+                "damage_score":      damage_score,
+                "blur_value":        blur_value,
+                "confidence":        0.0,
+                "verdict":           "Fake",
+                "no_product_detected": True,
+            }
+
+  
         # Damage-adjusted confidence
-        confidence = similarity["similarity"] * (1 - damage_score)
+        confidence = raw_similarity * (1 - damage_score)
 
         # Verdict
         verdict = self.classify(confidence)
 
         return {
             "product":           similarity["product"],
-            "Visual Similarity": similarity["similarity"],
+            "Visual Similarity": raw_similarity,
             "damage_score":      damage_score,
             "blur_value":        blur_value,      # Fusion uses this for scan triage
             "confidence":        round(confidence, 4),
