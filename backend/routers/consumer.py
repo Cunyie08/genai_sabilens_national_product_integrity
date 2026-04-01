@@ -56,31 +56,60 @@ def _normalise_result(ai_result: dict) -> dict:
     verdict = ai_result.get("final_verdict", "FAKE")   # exact AI verdict: AUTHENTIC | SUSPICIOUS | FAKE | RESCAN_REQUIRED
     confidence = ai_result.get("final_score", 0.0)
 
-    return {
-        "scan_id": ai_result.get("scan_id") or str(uuid.uuid4()),
-        "verdict": verdict,                            # exact AI verdict (uppercase)
-        "final_verdict": verdict,                      # same field — no transformation
-        "confidence_score": round(confidence, 4),
-        "confidence_pct": round(confidence * 100, 1),
-        "severity": ai_result.get("final_severity", "CRITICAL"),
-        "action": ai_result.get("action", "DO NOT BUY"),
-        "simple_instruction": ai_result.get("simple_instruction", ""),
-        "status": ai_result.get("status", "FAILSAFE"),
-        "summary": ai_result.get("summary", ""),
-        "detail": ai_result.get("detail", ""),
-        "report_priority": ai_result.get("report_priority", "NONE"),
-        "override_applied": ai_result.get("override_applied", False),
-        "override_summary": ai_result.get("override_summary", ""),
-        "warnings": ai_result.get("warnings", []),
-        "breakdown": ai_result.get("breakdown", {}),
-        "evidence_package": ai_result.get("evidence_package", {}),
-        "rescan_required": ai_result.get("rescan_required", False),
-        "signals_used": ai_result.get("signals_used", []),
-        "ai_signals": {
-            "ocr_mocked": ai_result.get("ocr_mocked", True),
-            "vision_mocked": ai_result.get("vision_mocked", True),
-        },
-    }
+    # Handle non-product image — return early with clean user message
+    if verdict == "INVALID_IMAGE":
+        return {
+            "scan_id":            ai_result.get("scan_id") or str(uuid.uuid4()),
+            "verdict":            "INVALID_IMAGE",
+            "final_verdict":      "INVALID_IMAGE",
+            "confidence_score":   0.0,
+            "confidence_pct":     0.0,
+            "severity":           "NONE",
+            "action":             "INVALID IMAGE",
+            "simple_instruction": "No product detected. Please take a clear photo of the product label and try again.",
+            "status":             "INVALID_IMAGE",
+            "summary":            "The image does not appear to contain a product label.",
+            "detail":             "",
+            "report_priority":    "NONE",
+            "override_applied":   True,
+            "override_summary":   "NO_PRODUCT_DETECTED",
+            "warnings":           ai_result.get("warnings", []),
+            "breakdown":          {},
+            "evidence_package":   {},
+            "rescan_required":    False,
+            "signals_used":       [],
+            "ai_signals": {
+                "ocr_mocked":    False,
+                "vision_mocked": False,
+            },
+        }
+    
+    else:
+        return {
+            "scan_id": ai_result.get("scan_id") or str(uuid.uuid4()),
+            "verdict": verdict,                            # exact AI verdict (uppercase)
+            "final_verdict": verdict,                      # same field — no transformation
+            "confidence_score": round(confidence, 4),
+            "confidence_pct": round(confidence * 100, 1),
+            "severity": ai_result.get("final_severity", "CRITICAL"),
+            "action": ai_result.get("action", "DO NOT BUY"),
+            "simple_instruction": ai_result.get("simple_instruction", ""),
+            "status": ai_result.get("status", "FAILSAFE"),
+            "summary": ai_result.get("summary", ""),
+            "detail": ai_result.get("detail", ""),
+            "report_priority": ai_result.get("report_priority", "NONE"),
+            "override_applied": ai_result.get("override_applied", False),
+            "override_summary": ai_result.get("override_summary", ""),
+            "warnings": ai_result.get("warnings", []),
+            "breakdown": ai_result.get("breakdown", {}),
+            "evidence_package": ai_result.get("evidence_package", {}),
+            "rescan_required": ai_result.get("rescan_required", False),
+            "signals_used": ai_result.get("signals_used", []),
+            "ai_signals": {
+                "ocr_mocked": ai_result.get("ocr_mocked", True),
+                "vision_mocked": ai_result.get("vision_mocked", True),
+            },
+        }
 
 
 async def _save_scan_to_db(
@@ -95,6 +124,9 @@ async def _save_scan_to_db(
     This is called after the AI result is already returned to the client,
     so any failure here does not affect the user-facing response.
     """
+    # Don't save invalid image scans to the database
+    if data.get("verdict") == "INVALID_IMAGE":
+        return None
     try:
         evidence = data.get("evidence_package", {})
 
