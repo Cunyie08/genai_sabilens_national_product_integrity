@@ -244,7 +244,58 @@ class ScanOrchestrator:
                 logger.warning("category_resolver failed.", exc_info=True)
 
         # Collect vision before category resolution so A1 match available
-        vision_signal   = vision_future.result()
+        vision_signal = vision_future.result()
+
+        # Short-circuit — if no product detected, skip OCR, regulatory, and fusion
+        if vision_signal.payload.get("no_product_detected"):
+            logger.info("scan() | NO_PRODUCT_DETECTED - skipping OCR, regulatory, fusion")
+            _pool.shutdown(wait=False)
+            # Return a minimal PipelineResult with INVALID_IMAGE verdict
+            mock_ocr = self._mock_ocr_signal()
+            mock_reg = AgentSignal(
+                agent_id="regulatory", available=False, confidence=0.0, mocked=True,
+                payload={"status_code": "SKIPPED", "verified": False,
+                         "verification_score": 0.0, "severity": "NONE",
+                         "summary": "", "detail": "", "fallback_used": False,
+                         "tools_called": [], "reasoning_trace": [],
+                         "expiry_check": None, "alignment": None,
+                         "matched_record": None, "all_records": []}
+            )
+            fusion_signal = self._run_fusion(
+                vision_signal     = vision_signal,
+                ocr_signal        = mock_ocr,
+                regulatory_signal = mock_reg,
+                gps_coordinates   = gps_coordinates,
+                purchase_channel  = purchase_channel,
+                receipt_image     = receipt_image,
+                storefront_image  = storefront_image,
+            )
+            fusion = fusion_signal.payload
+            return PipelineResult(
+                vision_signal      = vision_signal,
+                ocr_signal         = mock_ocr,
+                regulatory_signal  = mock_reg,
+                fusion_signal      = fusion_signal,
+                status             = "INVALID_IMAGE",
+                scan_id            = fusion.get("scan_id", ""),
+                final_verdict      = "INVALID_IMAGE",
+                final_score        = 0.0,
+                final_severity     = "NONE",
+                action             = "INVALID IMAGE",
+                simple_instruction = "No product detected. Please take a clear photo of the product label and try again.",
+                atlas_instruction  = "",
+                summary            = "Image does not contain a recognisable product label.",
+                detail             = "",
+                report_priority    = "NONE",
+                override_applied   = True,
+                override_summary   = "NO_PRODUCT_DETECTED",
+                warnings           = [{"type": "NO_PRODUCT_DETECTED", "message": "Image does not contain a recognisable product label."}],
+                breakdown          = {},
+                evidence_package   = {},
+                rescan_required    = False,
+                signals_used       = [],
+            )
+
         nafdac_category = _resolve_category(scanned_category, ocr_signal, vision_signal)
         logger.info(
             "Category resolved | frontend='%s' -> regulatory='%s'",
@@ -296,8 +347,6 @@ class ScanOrchestrator:
         )
 
     def _run_ocr_multi(self, image_paths: list, damage_score: float, retriever=None) -> AgentSignal:
-        print(f"DEBUG retriever type: {type(retriever).__name__}", flush=True) # ADD THIS
-
         try:
             from ocr_linguistic.pipeline import run_pipeline as ocr_run_pipeline
         except Exception:
@@ -428,6 +477,17 @@ class ScanOrchestrator:
                     "Vision image done | product=%s | confidence=%.3f | verdict=%s",
                     result.get("product"), conf, result.get("verdict"),
                 )
+                # Early exit for no product detected, no point scanning more images
+                if result.get("no_product_detected"):
+                    logger.info("Vision | NO_PRODUCT_DETECTED — skipping remaining images")
+                    return AgentSignal(
+                        agent_id   = "vision",
+                        available  = True,
+                        confidence = 0.0,
+                        mocked     = False,
+                        payload    = result,
+                    )
+
                 if conf > best_confidence:
                     best_confidence = conf
                     best_result     = result

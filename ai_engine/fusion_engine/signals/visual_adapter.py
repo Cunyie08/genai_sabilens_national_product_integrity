@@ -60,7 +60,26 @@ def adapt(visual_output: dict) -> dict:
 
     Returns:
         FusionSignal dict with all fields fusion_engine.run_fusion() needs.
+
     """
+    # non product image
+    if visual_output.get("no_product_detected"):
+        return {
+            "source":              "visual",
+            "fusion_score":        0.0,
+            "raw_confidence":      0.0,
+            "raw_similarity":      min(float(visual_output.get("Visual Similarity", 0.0)), 1.0),
+            "damage_score":        float(visual_output.get("damage_score", 0.1)),
+            "blur_value":          float(visual_output.get("blur_value", 60.0)),
+            "product_matched":     "NO_PRODUCT_DETECTED",
+            "Visual_verdict":      "Fake",
+            "override_flag":       True,
+            "override_reason":     "NO_PRODUCT_DETECTED",
+            "no_product_detected": True,
+            "timestamp":           datetime.now(timezone.utc).isoformat(),
+        }
+
+
     confidence      = min(float(visual_output.get("confidence",        0.0)), 1.0)
     raw_similarity  = min(float(visual_output.get("Visual Similarity", 0.0)), 1.0)
     damage_score    = float(visual_output.get("damage_score",      0.1))
@@ -106,6 +125,11 @@ def validate(visual_output: dict) -> list[str]:
     Check that Visual output has all required fields before adaptation.
     Returns a list of missing/invalid field names (empty = valid).
     """
+
+    # Non-product images skip validation
+    if visual_output.get("no_product_detected"):
+        return []
+    
     texts = []
     required = ["confidence", "Visual Similarity", "damage_score", "product", "verdict"]
 
