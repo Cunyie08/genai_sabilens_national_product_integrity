@@ -10,7 +10,7 @@ from backend.utils.response import success_response, error_response
 from backend.schemas.auth import (
     RegisterRequest, LoginRequest, VerifyOTPRequest, ResendOTPRequest,
     ForgotPasswordRequest, ResetPasswordRequest, RefreshTokenRequest,
-    AuthResponse
+    AuthResponse, ProfileUpdateRequest
 )
 from backend.services.auth_service import AuthService
 from backend.dependencies import get_current_user
@@ -54,6 +54,55 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     except Exception as e:
         logger.error("Login unexpected error: %s: %s", type(e).__name__, e, exc_info=True)
         raise HTTPException(status_code=503, detail=f"{type(e).__name__}: {e}")
+
+
+@router.get("/me")
+async def get_current_user_profile(
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get current user profile"""
+    try:
+        # Convert SQLAlchemy model to dict with all fields
+        user_dict = {
+            "id": str(current_user.id),
+            "phone": current_user.phone,
+            "email": current_user.email,
+            "first_name": current_user.first_name,
+            "last_name": current_user.last_name,
+            "role": current_user.role,
+            "status": current_user.status,
+            "email_verified": current_user.email_verified,
+            "phone_verified": current_user.phone_verified,
+            "profile_image_url": current_user.profile_image_url,
+            "preferred_language": current_user.preferred_language,
+            "state": getattr(current_user, 'state', None),
+            "city": getattr(current_user, 'city', None),
+            "last_login": current_user.last_login.isoformat() if current_user.last_login else None,
+            "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+            "updated_at": current_user.updated_at.isoformat() if current_user.updated_at else None,
+        }
+        return success_response(data=user_dict, message="Profile retrieved successfully")
+    except Exception as e:
+        logger.error(f"Error fetching profile: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/profile")
+async def update_user_profile(
+    req: ProfileUpdateRequest,
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update user profile"""
+    try:
+        updated_user = await AuthService.update_profile(db, current_user.id, req)
+        return success_response(data=updated_user.model_dump(mode="json"), message="Profile updated successfully")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating profile: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/logout")
@@ -124,4 +173,3 @@ async def resend_otp(req: ResendOTPRequest, db: AsyncSession = Depends(get_db)):
         return success_response({"message": "OTP sent successfully"})
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-

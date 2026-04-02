@@ -19,6 +19,60 @@ const Login = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toast, setToast] = useState(null);
 
+  // NEW: Function to get user-friendly error message for login
+  const getUserFriendlyErrorMessage = (error) => {
+    const message = error?.message?.toLowerCase() || '';
+    const status = error?.status;
+    const responseData = error?.response?.data;
+    
+    // Check for specific API error responses first
+    if (responseData) {
+      // Invalid credentials from backend
+      if (responseData.message?.toLowerCase().includes('invalid') || 
+          responseData.message?.toLowerCase().includes('incorrect') ||
+          responseData.message?.toLowerCase().includes('wrong')) {
+        return 'The phone number or password you entered is incorrect. Please try again.';
+      }
+      // User not found
+      if (responseData.message?.toLowerCase().includes('not found') ||
+          responseData.message?.toLowerCase().includes('does not exist')) {
+        return 'No account found with this phone number. Please sign up first.';
+      }
+      // Account locked or disabled
+      if (responseData.message?.toLowerCase().includes('locked') ||
+          responseData.message?.toLowerCase().includes('disabled')) {
+        return 'Your account has been locked. Please contact support for assistance.';
+      }
+    }
+    
+    // Network/connection issues
+    if (!navigator.onLine || message.includes('network') || message.includes('fetch') || message.includes('failed to fetch')) {
+      return 'No internet connection. Please check your network and try again.';
+    }
+    
+    // Timeout issues
+    if (message.includes('timeout') || message.includes('timed out')) {
+      return 'Request timed out. Please check your connection and try again.';
+    }
+    
+    // Server errors
+    if (status === 500 || message.includes('internal server error')) {
+      return 'Our servers are experiencing issues. Please try again in a few minutes.';
+    }
+    
+    if (status === 503 || message.includes('unavailable')) {
+      return 'Service temporarily unavailable. Please try again later.';
+    }
+    
+    // Rate limiting
+    if (status === 429 || message.includes('too many')) {
+      return 'Too many login attempts. Please wait a moment before trying again.';
+    }
+    
+    // Generic fallback
+    return 'Unable to log in. Please check your credentials and try again.';
+  };
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     if (name === 'phone') {
@@ -35,6 +89,7 @@ const Login = () => {
   const validateForm = () => {
     const newErrors = {};
     if (!formData.phone) newErrors.phone = 'Phone number is required';
+    if (formData.phone && formData.phone.length !== 10) newErrors.phone = 'Please enter a valid 10-digit phone number';
     if (!formData.password) newErrors.password = 'Password is required';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -58,8 +113,9 @@ const Login = () => {
       }));
       navigate('/home');
     } catch (error) {
-      const msg = error.message || 'Login failed. Please check your credentials.';
-      setToast({ type: 'error', message: msg });
+      // NEW: Use user-friendly error message
+      const userFriendlyMessage = getUserFriendlyErrorMessage(error);
+      setToast({ type: 'error', message: userFriendlyMessage });
       setIsSubmitting(false);
     }
   };

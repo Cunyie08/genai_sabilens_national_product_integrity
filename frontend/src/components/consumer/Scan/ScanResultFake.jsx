@@ -4,7 +4,8 @@ import Icon from '../../common/Icon';
 import Card from '../../common/Card';
 import Button from '../../common/Button';
 import Modal from '../../common/Modal';
-import { saveScanToHistory, getProductImage } from '../../../services/scanHistory';
+// Remove saveScan import - NOT NEEDED
+// import { saveScan } from '../../../services/scanHistory';
 
 const ScanResultFake = ({ onBack, onReportToAuthority }) => {
   const navigate = useNavigate();
@@ -13,65 +14,75 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
   const [scanData, setScanData] = useState(null);
 
   useEffect(() => {
-    const storedScan = sessionStorage.getItem('currentScan');
-    let productImage = null;
-    let aiResult = null;
-    let scanLocation = '';
-    let scanLat = null;
-    let scanLng = null;
+    const loadScan = async () => {
+      const storedScan = sessionStorage.getItem('currentScan');
+      let productImage = null;
+      let aiResult = null;
+      let scanLocation = '';
+      let scanLat = null;
+      let scanLng = null;
+      let scanId = null;
 
-    if (storedScan) {
-      try {
-        const parsed = JSON.parse(storedScan);
-        productImage = parsed.imageUrl || parsed.productImage;
-        aiResult = parsed.aiResult || null;
-        scanLocation = parsed.location || '';
-        scanLat = parsed.latitude ?? null;
-        scanLng = parsed.longitude ?? null;
-      } catch {}
-    }
+      if (storedScan) {
+        try {
+          const parsed = JSON.parse(storedScan);
+          productImage = parsed.imageUrl || parsed.productImage;
+          aiResult = parsed.aiResult || null;
+          scanLocation = parsed.location || '';
+          scanLat = parsed.latitude ?? null;
+          scanLng = parsed.longitude ?? null;
+          scanId = parsed.scan_id;
+        } catch {}
+      }
 
-    const confidence = aiResult?.confidence_pct ?? (
-      aiResult?.confidence_score != null
-        ? Math.round((aiResult.confidence_score || 0) * 100)
-        : 18
-    );
+      const confidence = aiResult?.confidence_pct ?? (
+        aiResult?.confidence_score != null
+          ? Math.round((aiResult.confidence_score || 0) * 100)
+          : 18
+      );
 
-    // Extract issues from AI warnings or evidence
-    const warnings = aiResult?.warnings || [];
-    const issues = warnings.length > 0
-      ? warnings.map((w) => w?.message || w?.type || String(w))
-      : aiResult?.detail
-        ? [aiResult.detail]
-        : ['Product did not match NAFDAC registry', 'Packaging anomalies detected'];
+      // Extract issues from AI warnings or evidence
+      const warnings = aiResult?.warnings || [];
+      const issues = warnings.length > 0
+        ? warnings.map((w) => w?.message || w?.type || String(w))
+        : aiResult?.detail
+          ? [aiResult.detail]
+          : ['Product did not match NAFDAC registry', 'Packaging anomalies detected'];
 
-    const data = {
-      product: aiResult?.evidence_package?.product_name || 'Unregistered Product',
-      productImage: productImage || 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400',
-      category: aiResult?.evidence_package?.category || 'Unknown',
-      manufacturer: 'Unknown / Unregistered',
-      nafdacNumber: 'Not Found',
-      batchNumber: 'Invalid',
-      status: 'fake',
-      similarity: confidence,
-      confidence,
-      severity: aiResult?.severity || 'CRITICAL',
-      action: aiResult?.action || 'DO NOT BUY',
-      instruction: aiResult?.simple_instruction || 'Do not buy this product. It appears to be counterfeit.',
-      summary: aiResult?.summary || '',
-      detail: aiResult?.detail || '',
-      issues,
-      warnings,
-      location: scanLocation || (scanLat && scanLng ? `${scanLat.toFixed(4)}° N, ${scanLng.toFixed(4)}° E` : 'Location unavailable'),
-      latitude: scanLat,
-      longitude: scanLng,
-      time: 'Today, ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      verified: false,
-      timestamp: new Date().toISOString(),
+      const data = {
+        id: scanId || `scan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        product: aiResult?.evidence_package?.product_name || 'Unregistered Product',
+        productImage: productImage || null,
+        category: aiResult?.evidence_package?.category || 'Unknown',
+        manufacturer: 'Unknown / Unregistered',
+        nafdacNumber: 'Not Found',
+        batchNumber: 'Invalid',
+        status: 'fake',
+        similarity: confidence,
+        confidence,
+        severity: aiResult?.severity || 'CRITICAL',
+        action: aiResult?.action || 'DO NOT BUY',
+        instruction: aiResult?.simple_instruction || 'Do not buy this product. It appears to be counterfeit.',
+        summary: aiResult?.summary || '',
+        detail: aiResult?.detail || '',
+        issues,
+        warnings,
+        location: scanLocation || (scanLat && scanLng ? `${scanLat.toFixed(4)}° N, ${scanLng.toFixed(4)}° E` : 'Location unavailable'),
+        latitude: scanLat,
+        longitude: scanLng,
+        time: 'Today, ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        verified: false,
+        timestamp: Date.now(),
+        date: new Date().toISOString(),
+      };
+
+      setScanData(data);
+      
+      // REMOVED: saveScan(data) - Backend already auto-saves!
+      console.log('Fake scan loaded (backend already saved this)');
     };
 
-    setScanData(data);
-    saveScanToHistory(data);
+    loadScan();
   }, []);
 
   const handleReportSubmit = () => {
@@ -119,15 +130,31 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
         {/* Product Image with Warning Overlay */}
         <div className="p-4 border-b border-gray-100 relative">
           <div className="bg-gray-100 rounded-xl h-48 flex items-center justify-center overflow-hidden relative">
-            <img 
-              src={scanData.productImage} 
-              alt={scanData.product}
-              className="w-full h-full object-contain opacity-50"
-              onError={(e) => {
-                e.target.onerror = null;
-                e.target.src = 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400';
-              }}
-            />
+            {scanData.productImage ? (
+              <img 
+                src={scanData.productImage} 
+                alt={scanData.product}
+                className="w-full h-full object-contain opacity-50"
+                onError={(e) => {
+                  e.target.onerror = null;
+                  e.target.style.display = 'none';
+                  const parent = e.target.parentElement;
+                  if (parent) {
+                    parent.innerHTML = `
+                      <div class="w-full h-full flex items-center justify-center bg-gray-100">
+                        <svg class="w-12 h-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                      </div>
+                    `;
+                  }
+                }}
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-gray-100">
+                <Icon name="Image" size={48} className="text-gray-300" library="fi" />
+              </div>
+            )}
             {/* Warning Overlay */}
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="bg-danger/80 text-white px-4 py-2 rounded-full font-bold text-lg rotate-[-15deg]">

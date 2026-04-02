@@ -52,6 +52,14 @@ export const authApi = {
 
   login: (payload) =>
     request('/api/v1/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
+
+  // Get current user profile
+  getProfile: () =>
+    request('/api/v1/auth/me', { method: 'GET' }),
+
+  // Update user profile
+  updateProfile: (payload) =>
+    request('/api/v1/auth/profile', { method: 'PUT', body: JSON.stringify(payload) }),
 };
 
 // ── Consumer Scan ─────────────────────────────────────────────────────────────
@@ -62,6 +70,7 @@ export const scanApi = {
    *
    * @param {object} payload
    * @param {string} payload.image_data  - base64 data-URL or remote image URL
+   * @param {string} [payload.back_image_data] - back/side panel image
    * @param {string} [payload.nafdac_no]
    * @param {string} [payload.category]
    * @param {number} [payload.latitude]
@@ -75,6 +84,43 @@ export const scanApi = {
 
   /** Liveness check for the consumer scan service. */
   health: () => request('/api/consumer/scan/health'),
+
+  // ── Scan History Endpoints ─────────────────────────────────────────────────
+
+  /**
+   * Get user's scan history
+   * @param {number} limit - Maximum number of scans to return (default: 100)
+   * @param {number} offset - Number of scans to skip (for pagination)
+   */
+  getScanHistory: (limit = 100, offset = 0) =>
+    request(`/api/consumer/scans?limit=${limit}&offset=${offset}`, { method: 'GET' }),
+
+  /**
+   * Get a specific scan by ID
+   * @param {string} scanId - UUID of the scan
+   */
+  getScanById: (scanId) =>
+    request(`/api/consumer/scan/${scanId}`, { method: 'GET' }),
+
+  /**
+   * Save a scan to history
+   * @param {object} payload - Scan data to save
+   */
+  saveScan: (payload) =>
+    request('/api/consumer/scans', { method: 'POST', body: JSON.stringify(payload) }),
+
+  /**
+   * Delete a specific scan
+   * @param {string} scanId - UUID of the scan to delete
+   */
+  deleteScan: (scanId) =>
+    request(`/api/consumer/scan/${scanId}`, { method: 'DELETE' }),
+
+  /**
+   * Clear all scan history for current user
+   */
+  clearScanHistory: () =>
+    request('/api/consumer/scans/clear', { method: 'DELETE' }),
 };
 
 // ── Verification ──────────────────────────────────────────────────────────────
