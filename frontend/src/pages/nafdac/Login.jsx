@@ -4,6 +4,7 @@ import Icon from '../../components/common/Icon';
 import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
+import { authApi } from '../../services/api';
 
 const NAFDACLogin = () => {
   const navigate = useNavigate();
@@ -18,25 +19,7 @@ const NAFDACLogin = () => {
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
 
-  // Pre-create NAFDAC admin if not exists
-  React.useEffect(() => {
-    const users = JSON.parse(localStorage.getItem('users') || '[]');
-    const nafdacExists = users.some(u => u.role === 'nafdac_admin');
-
-    if (!nafdacExists) {
-      users.push({
-        id: 'nafdac_1',
-        email: 'admin@nafdac.gov.ng',
-        password: 'Nafdac@2024',
-        firstName: 'NAFDAC',
-        lastName: 'Admin',
-        role: 'nafdac_admin',
-        status: 'active',
-        createdAt: new Date().toISOString()
-      });
-      localStorage.setItem('users', JSON.stringify(users));
-    }
-  }, []);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -68,37 +51,36 @@ const NAFDACLogin = () => {
     return formData.email && formData.password;
   };
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-
     setTouched({ email: true, password: true });
-
     if (!isFormValid()) return;
 
-    // Get users from localStorage
-    const users = JSON.parse(localStorage.getItem('users') || '[]');
+    setIsSubmitting(true);
+    try {
+      const response = await authApi.login({ email: formData.email, password: formData.password });
+      const { user, tokens } = response.data;
 
-    // Find NAFDAC user
-    const user = users.find(u =>
-      u.email === formData.email &&
-      u.password === formData.password &&
-      (u.role === 'nafdac_admin' || u.role === 'nafdac_officer')
-    );
+      if (user.role !== 'nafdac_officer' && user.role !== 'nafdac_admin') {
+        setError('Access denied. This portal is for NAFDAC officers only.');
+        return;
+      }
 
-    if (user) {
-      // Store current user session
+      localStorage.setItem('accessToken', tokens.access_token);
+      localStorage.setItem('refreshToken', tokens.refresh_token);
       localStorage.setItem('currentUser', JSON.stringify({
         id: user.id,
         email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role,
       }));
 
-      // Redirect to NAFDAC dashboard
       navigate('/nafdac/dashboard');
-    } else {
-      setError('Invalid credentials. Use admin@nafdac.gov.ng / Nafdac@2024');
+    } catch (error) {
+      setError(error.message || 'Invalid credentials. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -183,9 +165,9 @@ const NAFDACLogin = () => {
               type="submit"
               variant="primary"
               fullWidth
-              disabled={!isFormValid()}
+              disabled={!isFormValid() || isSubmitting}
             >
-              Access NAFDAC Dashboard
+              {isSubmitting ? 'Logging in...' : 'Access NAFDAC Dashboard'}
             </Button>
 
             <p className="text-center text-sm text-gray-500 mt-4">
@@ -214,12 +196,6 @@ const NAFDACLogin = () => {
           </div>
         </Card>
 
-        {/* Demo Credentials */}
-        <Card className="bg-primary/5 border border-primary/20">
-          <p className="text-xs text-gray-600 font-medium mb-2">Demo Credentials:</p>
-          <p className="text-xs text-gray-500">Email: admin@nafdac.gov.ng</p>
-          <p className="text-xs text-gray-500">Password: Nafdac@2024</p>
-        </Card>
       </div>
 
       {/* Terms of Service Modal */}
