@@ -40,6 +40,9 @@ class User(Base):
     profile_image_url = Column(Text, nullable=True)
     preferred_language = Column(String(10), default="en")
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)
+    # NEW: Location fields
+    state = Column(String(100), nullable=True)
+    city = Column(String(100), nullable=True)
     last_login = Column(DateTime, nullable=True)
     deleted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())

@@ -1,3 +1,23 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+myenv/
+env/
+venv/
+
+# Database / generated files
+chroma_db/
+
+# Environment / secret files
+.env
+frontend/.env
+
+# IDE / editor files
+.vscode/
+.idea/
 .env
 backend/.env
 a_venv

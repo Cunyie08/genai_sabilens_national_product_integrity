@@ -4,33 +4,33 @@ import Icon from '../../components/common/Icon';
 import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
+import { authApi } from '../../services/api';
 import { mockUploadImage } from '../../services/cloudinary';
 
 const EditProfile = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
   
-  // Get current user data
+  // Get current user data from localStorage
   const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-  const users = JSON.parse(localStorage.getItem('users') || '[]');
-  const userData = users.find(u => u.phone === currentUser.phone) || {};
   
   const [formData, setFormData] = useState({
-    firstName: userData.firstName || '',
-    lastName: userData.lastName || '',
-    phone: userData.phone || '',
-    email: userData.email || '',
-    city: userData.city || '',
-    state: userData.state || '',
-    language: userData.language || 'English',
-    profileImage: userData.profileImage || null
+    firstName: currentUser.firstName || '',
+    lastName: currentUser.lastName || '',
+    phone: currentUser.phone || '',
+    email: currentUser.email || '',
+    city: currentUser.city || '',
+    state: currentUser.state || '',
+    language: currentUser.preferredLanguage || currentUser.language || 'English',
+    profileImage: currentUser.profileImage || currentUser.profile_image_url || null
   });
 
   const [isUploading, setIsUploading] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [touched, setTouched] = useState({});
-  const [previewImage, setPreviewImage] = useState(userData.profileImage || null);
+  const [previewImage, setPreviewImage] = useState(formData.profileImage);
+  const [isSaving, setIsSaving] = useState(false);
 
   const nigerianStates = [
     'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
@@ -50,8 +50,6 @@ const EditProfile = () => {
       case 'email':
         if (!value) return ''; // Email is optional
         return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? '' : 'Invalid email format';
-      case 'phone':
-        return /^[0-9]{10}$/.test(value) ? '' : 'Valid 10-digit number required';
       case 'city':
         return value.trim() ? '' : 'City is required';
       case 'state':
@@ -67,18 +65,25 @@ const EditProfile = () => {
   };
 
   const isFormValid = () => {
-    const requiredFields = ['firstName', 'lastName', 'phone', 'city', 'state'];
+    const requiredFields = ['firstName', 'lastName', 'city', 'state'];
     return requiredFields.every(field => !validateField(field, formData[field]));
+  };
+
+  const hasChanges = () => {
+    return (
+      formData.firstName !== (currentUser.firstName || '') ||
+      formData.lastName !== (currentUser.lastName || '') ||
+      formData.email !== (currentUser.email || '') ||
+      formData.city !== (currentUser.city || '') ||
+      formData.state !== (currentUser.state || '') ||
+      formData.language !== (currentUser.preferredLanguage || currentUser.language || 'English') ||
+      formData.profileImage !== (currentUser.profileImage || currentUser.profile_image_url || null)
+    );
   };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    if (name === 'phone') {
-      const numbersOnly = value.replace(/\D/g, '');
-      setFormData(prev => ({ ...prev, [name]: numbersOnly }));
-    } else {
-      setFormData(prev => ({ ...prev, [name]: value }));
-    }
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
   const handleBlur = (name) => {
@@ -118,49 +123,71 @@ const EditProfile = () => {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     // Mark all fields as touched
-    const allFields = ['firstName', 'lastName', 'phone', 'city', 'state'];
+    const allFields = ['firstName', 'lastName', 'city', 'state'];
     const touchedFields = allFields.reduce((acc, field) => ({ ...acc, [field]: true }), {});
     setTouched(touchedFields);
 
     if (!isFormValid()) return;
+    
+    setIsSaving(true);
 
-    // Update user data in users array
-    const updatedUsers = users.map(u => {
-      if (u.phone === currentUser.phone) {
-        return {
-          ...u,
-          firstName: formData.firstName,
-          lastName: formData.lastName,
-          city: formData.city,
-          state: formData.state,
-          language: formData.language,
-          email: formData.email,
-          profileImage: formData.profileImage
-        };
-      }
-      return u;
-    });
-
-    localStorage.setItem('users', JSON.stringify(updatedUsers));
-
-    // Update current user
-    localStorage.setItem('currentUser', JSON.stringify({
-      ...currentUser,
-      firstName: formData.firstName,
-      lastName: formData.lastName,
-      profileImage: formData.profileImage
-    }));
-
-    // Force refresh of home page data
-    window.dispatchEvent(new Event('focus'));
-
-    setShowSuccessModal(true);
+    try {
+      // Update profile via API
+      const updatePayload = {
+        first_name: formData.firstName,
+        last_name: formData.lastName,
+        email: formData.email || null,
+        state: formData.state,
+        city: formData.city,
+        preferred_language: formData.language,
+      };
+      
+      await authApi.updateProfile(updatePayload);
+      
+      // Update localStorage
+      const updatedUser = {
+        ...currentUser,
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        email: formData.email,
+        state: formData.state,
+        city: formData.city,
+        preferredLanguage: formData.language,
+        profileImage: formData.profileImage,
+        profile_image_url: formData.profileImage
+      };
+      
+      localStorage.setItem('currentUser', JSON.stringify(updatedUser));
+      
+      // Force refresh of profile data
+      window.dispatchEvent(new Event('focus'));
+      
+      setShowSuccessModal(true);
+    } catch (error) {
+      console.error('Failed to update profile:', error);
+      // Show error toast or modal
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleCancel = () => {
-    setShowCancelModal(true);
+    if (hasChanges()) {
+      setShowCancelModal(true);
+    } else {
+      navigate('/profile');
+    }
+  };
+
+  const handleCloseWithoutSaving = () => {
+    setShowCancelModal(false);
+    navigate('/profile');
+  };
+
+  const handleCloseCancelModal = () => {
+    setShowCancelModal(false);
   };
 
   const getInitials = () => {
@@ -180,39 +207,29 @@ const EditProfile = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
+      {/* Header - Removed Save button */}
       <div className="bg-white px-6 pt-12 pb-4 sticky top-0 z-10 shadow-soft">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button 
-              onClick={handleCancel}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <Icon name="ArrowLeft" size={20} className="text-gray-600" library="fi" />
-            </button>
-            <h1 className="text-2xl font-bold text-gray-900">Edit Profile</h1>
-          </div>
-          <button
-            onClick={handleSave}
-            disabled={!isFormValid()}
-            className={`px-6 py-2 rounded-xl font-medium transition-all ${
-              isFormValid() 
-                ? 'bg-primary text-white hover:bg-primary-dark shadow-md hover:shadow-lg' 
-                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-            }`}
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={handleCancel}
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
           >
-            Save
+            <Icon name="ArrowLeft" size={20} className="text-gray-600" library="fi" />
           </button>
+          <h1 className="text-2xl font-bold text-gray-900">Edit Profile</h1>
         </div>
       </div>
 
       <div className="p-6 space-y-6">
-        {/* Profile Image Section */}
+        {/* Profile Image Section - Added upload icon overlay */}
         <Card>
           <div className="flex flex-col items-center">
-            <div className="relative mb-4 group">
+            <div className="relative mb-4 group cursor-pointer">
               {/* Profile Image */}
-              <div className="w-28 h-28 rounded-full overflow-hidden bg-primary/10 flex items-center justify-center border-4 border-white shadow-lg">
+              <div 
+                className="w-28 h-28 rounded-full overflow-hidden bg-primary/10 flex items-center justify-center border-4 border-white shadow-lg"
+                onClick={() => fileInputRef.current?.click()}
+              >
                 {previewImage ? (
                   <img 
                     src={previewImage} 
@@ -224,32 +241,32 @@ const EditProfile = () => {
                     }}
                   />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center bg-primary">
+                  <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary to-primary-dark">
                     <span className="text-white text-3xl font-bold">{getInitials()}</span>
                   </div>
                 )}
               </div>
 
-              {/* Upload Overlay */}
-              <div className="absolute inset-0 rounded-full bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isUploading}
-                  className="w-10 h-10 bg-white rounded-full flex items-center justify-center hover:bg-gray-100 transition-colors"
-                >
-                  {isUploading ? (
-                    <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <Icon name="Camera" size={18} className="text-primary" library="fi" />
-                  )}
-                </button>
+              {/* Upload Icon Overlay - Always visible, clickable */}
+              <div 
+                onClick={() => fileInputRef.current?.click()}
+                className="absolute -bottom-2 -right-2 w-10 h-10 bg-primary text-white rounded-full flex items-center justify-center border-4 border-white shadow-md hover:bg-primary-dark transition-all cursor-pointer"
+              >
+                {isUploading ? (
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Icon name="Camera" size={18} className="text-white" library="fi" />
+                )}
               </div>
 
               {/* Remove Image Button (only shown if image exists) */}
               {previewImage && (
                 <button
-                  onClick={handleRemoveImage}
-                  className="absolute -bottom-2 -right-2 w-8 h-8 bg-danger text-white rounded-full flex items-center justify-center border-2 border-white shadow-md hover:bg-danger-dark transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemoveImage();
+                  }}
+                  className="absolute -top-2 -right-2 w-8 h-8 bg-danger text-white rounded-full flex items-center justify-center border-2 border-white shadow-md hover:bg-danger-dark transition-colors"
                   title="Remove image"
                 >
                   <Icon name="X" size={14} className="text-white" library="fi" />
@@ -265,10 +282,10 @@ const EditProfile = () => {
               />
             </div>
 
-            <p className="text-sm text-gray-400">
-              {isUploading ? 'Uploading...' : 'Tap to change profile picture'}
+            <p className="text-sm text-primary font-medium">
+              {isUploading ? 'Uploading...' : 'Click to change profile picture'}
             </p>
-            <p className="text-xs text-gray-300 mt-1">
+            <p className="text-xs text-gray-400 mt-1">
               Recommended: Square image, at least 400x400px
             </p>
           </div>
@@ -334,7 +351,7 @@ const EditProfile = () => {
 
             <div>
               <label className="text-sm text-gray-500 mb-1 block">
-                Phone Number <span className="text-danger">*</span>
+                Phone Number
               </label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium">+234</span>
@@ -342,8 +359,6 @@ const EditProfile = () => {
                   type="tel"
                   name="phone"
                   value={formData.phone}
-                  onChange={handleChange}
-                  onBlur={() => handleBlur('phone')}
                   disabled
                   className="w-full pl-16 pr-4 py-3 border border-gray-200 rounded-xl bg-gray-100 text-gray-500 cursor-not-allowed"
                   placeholder="8012345678"
@@ -461,16 +476,16 @@ const EditProfile = () => {
           </div>
         </Card>
 
-        {/* Action Buttons */}
+        {/* Action Buttons - Save at bottom only */}
         <div className="space-y-3 pt-4">
           <Button
             variant="primary"
             fullWidth
             onClick={handleSave}
-            disabled={!isFormValid()}
+            disabled={!isFormValid() || isSaving}
             icon="Check"
           >
-            Save Changes
+            {isSaving ? 'Saving...' : 'Save Changes'}
           </Button>
 
           <button
@@ -504,35 +519,50 @@ const EditProfile = () => {
         }
       />
 
-      {/* Cancel Confirmation Modal */}
-      <Modal
-        isOpen={showCancelModal}
-        onClose={() => setShowCancelModal(false)}
-        type="warning"
-        title="Discard Changes?"
-        message={
-          <div>
-            <p className="text-gray-600 mb-4">You have unsaved changes. Are you sure you want to leave?</p>
-            <div className="flex gap-3">
-              <Button
-                variant="outline"
-                onClick={() => setShowCancelModal(false)}
-              >
-                Stay
-              </Button>
-              <Button
-                variant="danger"
-                onClick={() => {
-                  setShowCancelModal(false);
-                  navigate('/profile');
-                }}
-              >
-                Discard
-              </Button>
+      {/* Cancel Confirmation Modal - Custom modal without close button, with cancel icon */}
+      {showCancelModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
+            {/* Cancel Icon at Top Right */}
+            <button
+              onClick={handleCloseCancelModal}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors z-10"
+            >
+              <Icon name="X" size={16} className="text-gray-500" library="fi" />
+            </button>
+
+            {/* Content */}
+            <div className="p-6 pt-8">
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-warning/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Icon name="AlertTriangle" size={28} className="text-warning" library="fi" />
+                </div>
+                <h2 className="text-xl font-bold text-gray-900 mb-2">Discard Changes?</h2>
+                <p className="text-gray-600">
+                  You have unsaved changes. Are you sure you want to leave?
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowCancelModal(false)}
+                  fullWidth
+                >
+                  Stay
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={handleCloseWithoutSaving}
+                  fullWidth
+                >
+                  Discard & Leave
+                </Button>
+              </div>
             </div>
           </div>
-        }
-      />
+        </div>
+      )}
     </div>
   );
 };

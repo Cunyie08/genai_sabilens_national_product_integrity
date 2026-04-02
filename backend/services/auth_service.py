@@ -10,7 +10,7 @@ from email.mime.text import MIMEText
 
 from backend.models.user import User, Session, OTPVerification, UserRole, UserStatus
 from backend.core.security import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
-from backend.schemas.auth import RegisterRequest, LoginRequest, TokenResponse, UserResponse
+from backend.schemas.auth import RegisterRequest, LoginRequest, TokenResponse, UserResponse, ProfileUpdateRequest
 from backend.config import settings
 
 
@@ -35,7 +35,7 @@ class AuthService:
         # In local debug mode, auto-activate accounts to simplify testing.
         auto_activate = settings.AUTH_AUTO_ACTIVATE
 
-        # Create user
+        # Create user with new fields
         user = User(
             email=req.email,
             phone=req.phone,
@@ -46,6 +46,9 @@ class AuthService:
             status=UserStatus.ACTIVE if auto_activate else UserStatus.PENDING,
             phone_verified=auto_activate,
             email_verified=auto_activate,
+            # NEW: Save location fields
+            state=getattr(req, 'state', None),
+            city=getattr(req, 'city', None),
         )
         db.add(user)
         await db.flush()
@@ -102,6 +105,40 @@ class AuthService:
         user_resp = UserResponse.model_validate(user)
         
         return user_resp, tokens
+    
+    
+    @staticmethod
+    async def update_profile(db: AsyncSession, user_id: str, req: ProfileUpdateRequest) -> UserResponse:
+        """Update user profile"""
+        user = await db.get(User, user_id)
+        if not user:
+            raise ValueError("User not found")
+        
+        # Update fields if provided
+        if req.first_name is not None:
+            user.first_name = req.first_name
+        if req.last_name is not None:
+            user.last_name = req.last_name
+        if req.preferred_language is not None:
+            user.preferred_language = req.preferred_language
+        if req.state is not None:
+            user.state = req.state
+        if req.city is not None:
+            user.city = req.city
+        if req.email is not None:
+            # Check if email is already taken by another user
+            if req.email != user.email:
+                stmt = select(User).where(User.email == req.email, User.id != user_id)
+                result = await db.execute(stmt)
+                if result.scalars().first():
+                    raise ValueError("Email already in use")
+                user.email = req.email
+                user.email_verified = False  # Require re-verification for new email
+        
+        await db.commit()
+        await db.refresh(user)
+        
+        return UserResponse.model_validate(user)
     
     
     @staticmethod

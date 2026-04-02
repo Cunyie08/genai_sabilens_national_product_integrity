@@ -136,6 +136,12 @@ const ConsumerSignup = () => {
     title: '',
     message: ''
   });
+  
+  // NEW: Track checkbox errors
+  const [checkboxErrors, setCheckboxErrors] = useState({
+    agreeTerms: false,
+    agreeLocation: false
+  });
 
   // Password requirements
   const passwordRequirements = [
@@ -191,6 +197,19 @@ const ConsumerSignup = () => {
     return validateField(name, formData[name]);
   };
 
+  // NEW: Function to validate checkboxes
+  const validateCheckboxes = () => {
+    const locationError = !formData.agreeLocation;
+    const termsError = !formData.agreeTerms;
+    
+    setCheckboxErrors({
+      agreeLocation: locationError,
+      agreeTerms: termsError
+    });
+    
+    return !locationError && !termsError;
+  };
+
   const isFormValid = () => {
     const requiredFields = ['firstName', 'lastName', 'phone', 'state', 'city', 'password', 'confirmPassword'];
     const allFieldsFilled = requiredFields.every(field => {
@@ -198,7 +217,8 @@ const ConsumerSignup = () => {
       return value && value.toString().trim();
     });
     const noErrors = requiredFields.every(field => !validateField(field, formData[field]));
-    return allFieldsFilled && noErrors && formData.agreeLocation && formData.agreeTerms;
+    const checkboxesValid = formData.agreeLocation && formData.agreeTerms;
+    return allFieldsFilled && noErrors && checkboxesValid;
   };
 
   const handleChange = (e) => {
@@ -215,6 +235,11 @@ const ConsumerSignup = () => {
     if (errors[name]) {
       setErrors(prev => ({ ...prev, [name]: '' }));
     }
+    
+    // NEW: Clear checkbox error when user checks the box
+    if (type === 'checkbox' && checked) {
+      setCheckboxErrors(prev => ({ ...prev, [name]: false }));
+    }
   };
 
   const handleBlur = (name) => {
@@ -230,14 +255,65 @@ const ConsumerSignup = () => {
     setTouched(prev => ({ ...prev, city: true }));
   };
 
+  // NEW: Function to get user-friendly error message
+  const getUserFriendlyErrorMessage = (error) => {
+    const message = error?.message?.toLowerCase() || '';
+    const status = error?.status;
+    
+    // Network/connection issues
+    if (!navigator.onLine || message.includes('network') || message.includes('fetch') || message.includes('failed to fetch')) {
+      return 'No internet connection. Please check your network and try again.';
+    }
+    
+    // Timeout issues
+    if (message.includes('timeout') || message.includes('timed out')) {
+      return 'Request timed out. Please check your connection and try again.';
+    }
+    
+    // Server errors
+    if (status === 500 || message.includes('internal server error')) {
+      return 'Our servers are experiencing issues. Please try again in a few minutes.';
+    }
+    
+    if (status === 503 || message.includes('unavailable')) {
+      return 'Service temporarily unavailable. Please try again later.';
+    }
+    
+    // Rate limiting
+    if (status === 429 || message.includes('too many')) {
+      return 'Too many attempts. Please wait a moment before trying again.';
+    }
+    
+    // Phone number already registered
+    if (message.includes('already exists') || message.includes('already registered') || message.includes('phone') && message.includes('exist')) {
+      return 'This phone number is already registered. Please log in instead or use a different number.';
+    }
+    
+    // Invalid phone format
+    if (message.includes('phone') && (message.includes('invalid') || message.includes('format'))) {
+      return 'Please enter a valid 10-digit Nigerian phone number (e.g., 8012345678).';
+    }
+    
+    // Password issues from backend
+    if (message.includes('password')) {
+      return 'Your password doesn\'t meet our security requirements. Please use at least 8 characters with uppercase, lowercase, numbers, and special characters.';
+    }
+    
+    // Generic fallback
+    return 'Unable to create account. Please check your information and try again.';
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     const requiredFields = ['firstName', 'lastName', 'phone', 'state', 'city', 'password', 'confirmPassword'];
     const touchedFields = requiredFields.reduce((acc, field) => ({ ...acc, [field]: true }), {});
     setTouched(touchedFields);
-
-    if (!isFormValid()) return;
+    
+    // NEW: Validate checkboxes before proceeding
+    const checkboxesValid = validateCheckboxes();
+    
+    if (!isFormValid() || !checkboxesValid) return;
 
     setIsSubmitting(true);
 
@@ -273,11 +349,16 @@ const ConsumerSignup = () => {
       }, 2000);
 
     } catch (error) {
-      const msg = error.message || 'Something went wrong. Please try again.';
-      if (msg.toLowerCase().includes('already exists') || msg.toLowerCase().includes('already registered')) {
-        setErrors({ phone: 'This phone number is already registered' });
+      // NEW: Use user-friendly error messages
+      const userFriendlyMessage = getUserFriendlyErrorMessage(error);
+      
+      // Check specifically for phone number already registered
+      const errorMessage = error?.message?.toLowerCase() || '';
+      if (errorMessage.includes('already exists') || errorMessage.includes('already registered')) {
+        setErrors({ phone: 'This phone number is already registered. Please log in instead.' });
       } else {
-        setToast({ type: 'error', message: msg });
+        // Show toast with user-friendly message
+        setToast({ type: 'error', message: userFriendlyMessage });
       }
       setIsSubmitting(false);
     }
@@ -291,30 +372,34 @@ const ConsumerSignup = () => {
   };
 
   // Custom Checkbox Component — fixed alignment and spacing on mobile
-  const CustomCheckbox = ({ name, checked, onChange, label }) => (
-    <label className="flex items-start gap-2 cursor-pointer">
-      <div className="relative flex-shrink-0" style={{ marginTop: '2px' }}>
-        <input
-          type="checkbox"
-          name={name}
-          checked={checked}
-          onChange={onChange}
-          className="sr-only"
-        />
-        <div
-          className={`w-4 h-4 border-2 rounded transition-all duration-200 flex items-center justify-center
-            ${checked
-              ? 'border-primary bg-primary'
-              : 'border-gray-300 bg-white hover:border-primary'
-            }`}
-        >
-          {checked && (
-            <Icon name="Check" size={10} library="fi" className="text-white" />
-          )}
+  const CustomCheckbox = ({ name, checked, onChange, label, hasError }) => (
+    <div>
+      <label className="flex items-start gap-2 cursor-pointer">
+        <div className="relative flex-shrink-0" style={{ marginTop: '2px' }}>
+          <input
+            type="checkbox"
+            name={name}
+            checked={checked}
+            onChange={onChange}
+            className="sr-only"
+          />
+          <div
+            className={`w-4 h-4 border-2 rounded transition-all duration-200 flex items-center justify-center
+              ${checked
+                ? 'border-primary bg-primary'
+                : hasError
+                  ? 'border-danger bg-danger/5'
+                  : 'border-gray-300 bg-white hover:border-primary'
+              }`}
+          >
+            {checked && (
+              <Icon name="Check" size={10} library="fi" className="text-white" />
+            )}
+          </div>
         </div>
-      </div>
-      <span className="text-sm text-gray-600 leading-snug">{label}</span>
-    </label>
+        <span className={`text-sm leading-snug ${hasError ? 'text-danger' : 'text-gray-600'}`}>{label}</span>
+      </label>
+    </div>
   );
 
   // Custom Modal Component for Policy Pages
@@ -661,12 +746,13 @@ const ConsumerSignup = () => {
                   )}
                 </div>
 
-                {/* Custom Checkboxes */}
+                {/* Custom Checkboxes with Error Messages */}
                 <div className="space-y-3">
                   <CustomCheckbox
                     name="agreeLocation"
                     checked={formData.agreeLocation}
                     onChange={handleChange}
+                    hasError={checkboxErrors.agreeLocation}
                     label="Allow SabiLens to use my device location for accurate counterfeit reporting"
                   />
 
@@ -674,6 +760,7 @@ const ConsumerSignup = () => {
                     name="agreeTerms"
                     checked={formData.agreeTerms}
                     onChange={handleChange}
+                    hasError={checkboxErrors.agreeTerms}
                     label={
                       <>
                         I agree to the{' '}
@@ -693,6 +780,19 @@ const ConsumerSignup = () => {
                       </>
                     }
                   />
+                  
+                  {/* NEW: Combined error message at bottom of checkmarks */}
+                  {(checkboxErrors.agreeLocation || checkboxErrors.agreeTerms) && (
+                    <div className="mt-2 p-3 bg-danger/10 border border-danger/20 rounded-lg">
+                      <p className="text-danger text-sm font-medium flex items-center gap-2">
+                        <Icon name="AlertTriangle" size={16} library="fi" className="text-danger" />
+                        Please check the boxes above to continue
+                      </p>
+                      <p className="text-danger/80 text-xs mt-1">
+                        You must agree to both location sharing and our terms & conditions to create an account.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Submit Button */}
