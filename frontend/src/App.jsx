@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-route
 import ScrollToTop from './components/common/ScrollToTop';
 
 // Consumer Pages
-import ScanResultSuspicious from './components/consumer/Scan/ScanResultSuspicious';
 import MobileSplash from './pages/consumer/MobileSplash';
 import LandingPage from './pages/consumer/LandingPage';
 import Onboarding from './pages/consumer/Onboarding';
@@ -41,6 +40,10 @@ import NAFDACVendors from './pages/nafdac/VendorTracker';
 import NAFDACAnalytics from './pages/nafdac/Analytics';
 import NAFDACExport from './pages/nafdac/ExportData';
 
+// Admin Pages
+import AdminLogin from './pages/admin/AdminLogin';
+import AdminDashboard from './pages/admin/AdminDashboard';
+
 // Home component with screen size detection
 const HomeRedirect = () => {
   const navigate = useNavigate();
@@ -55,9 +58,6 @@ const HomeRedirect = () => {
     };
     
     checkScreenSize();
-    // Optional: Add resize listener if you want to handle screen resize
-    // window.addEventListener('resize', checkScreenSize);
-    // return () => window.removeEventListener('resize', checkScreenSize);
   }, [navigate]);
   
   return null;
@@ -104,6 +104,14 @@ const NAFDACProtectedRoute = ({ children }) => {
   return children;
 };
 
+const AdminProtectedRoute = ({ children }) => {
+  const auth = JSON.parse(localStorage.getItem('adminAuth') || '{}');
+  if (!auth.authenticated) {
+    return <Navigate to="/admin" replace />;
+  }
+  return children;
+};
+
 function App() {
   return (
     <BrowserRouter
@@ -124,7 +132,6 @@ function App() {
         <Route path="/mobile-splash" element={<MobileSplash />} />
         <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/role-select" element={<RoleSelect />} />
-        <Route path="/scan/suspicious" element={<ScanResultSuspicious />} />
         
         {/* Consumer Auth */}
         <Route path="/signup" element={<ConsumerSignup />} />
@@ -165,6 +172,10 @@ function App() {
         <Route path="/nafdac/vendors" element={<NAFDACProtectedRoute><NAFDACVendors /></NAFDACProtectedRoute>} />
         <Route path="/nafdac/analytics" element={<NAFDACProtectedRoute><NAFDACAnalytics /></NAFDACProtectedRoute>} />
         <Route path="/nafdac/export" element={<NAFDACProtectedRoute><NAFDACExport /></NAFDACProtectedRoute>} />
+
+        {/* Admin Routes */}
+        <Route path="/admin" element={<AdminLogin />} />
+        <Route path="/admin/dashboard" element={<AdminProtectedRoute><AdminDashboard /></AdminProtectedRoute>} />
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
