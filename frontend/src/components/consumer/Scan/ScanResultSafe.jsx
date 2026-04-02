@@ -3,79 +3,90 @@ import { useNavigate } from 'react-router-dom';
 import Icon from '../../common/Icon';
 import Card from '../../common/Card';
 import Button from '../../common/Button';
-import { saveScanToHistory, getProductImage } from '../../../services/scanHistory';
+// Remove saveScan import - NOT NEEDED
+// import { saveScan } from '../../../services/scanHistory';
 
 const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
   const navigate = useNavigate();
   const [scanData, setScanData] = useState(null);
 
   useEffect(() => {
-    const storedScan = sessionStorage.getItem('currentScan');
-    let productImage = null;
-    let aiResult = null;
-    let scanLocation = '';
-    let scanLat = null;
-    let scanLng = null;
+    const loadScan = async () => {
+      const storedScan = sessionStorage.getItem('currentScan');
+      let productImage = null;
+      let aiResult = null;
+      let scanLocation = '';
+      let scanLat = null;
+      let scanLng = null;
+      let scanId = null;
 
-    if (storedScan) {
-      try {
-        const parsed = JSON.parse(storedScan);
-        productImage = parsed.imageUrl || parsed.productImage;
-        aiResult = parsed.aiResult || null;
-        scanLocation = parsed.location || '';
-        scanLat = parsed.latitude ?? null;
-        scanLng = parsed.longitude ?? null;
-      } catch {}
-    }
+      if (storedScan) {
+        try {
+          const parsed = JSON.parse(storedScan);
+          productImage = parsed.imageUrl || parsed.productImage;
+          aiResult = parsed.aiResult || null;
+          scanLocation = parsed.location || '';
+          scanLat = parsed.latitude ?? null;
+          scanLng = parsed.longitude ?? null;
+          scanId = parsed.scan_id;
+        } catch {}
+      }
 
-    // Extract fields from real AI result when available
-    const verdictRaw = aiResult?.final_verdict || 'AUTHENTIC';
-    const isSuspicious = verdictRaw === 'SUSPICIOUS';
-    const confidence = aiResult?.confidence_pct ?? aiResult?.confidence_score != null
-      ? Math.round((aiResult.confidence_score || 0) * 100)
-      : 92;
+      // Extract fields from real AI result when available
+      const verdictRaw = aiResult?.final_verdict || 'AUTHENTIC';
+      const isSuspicious = verdictRaw === 'SUSPICIOUS';
+      const confidence = aiResult?.confidence_pct ?? (aiResult?.confidence_score != null
+        ? Math.round((aiResult.confidence_score || 0) * 100)
+        : 92);
 
-    // Extract NAFDAC number from evidence package or breakdown
-    const evidence = aiResult?.evidence_package || {};
-    const regPayload = aiResult?.breakdown?.reg || {};
-    const nafdacNumber = evidence?.nafdac_number
-      || regPayload?.nafdac_number
-      || 'Extracted by AI';
+      // Extract NAFDAC number from evidence package or breakdown
+      const evidence = aiResult?.evidence_package || {};
+      const regPayload = aiResult?.breakdown?.reg || {};
+      const nafdacNumber = evidence?.nafdac_number
+        || regPayload?.nafdac_number
+        || 'Extracted by AI';
 
-    const status = isSuspicious ? 'suspicious' : 'authentic';
+      const status = isSuspicious ? 'suspicious' : 'authentic';
 
-    const data = {
-      product: aiResult?.evidence_package?.product_name || 'Verified Product',
-      productImage: productImage || 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400',
-      category: aiResult?.evidence_package?.category || 'Consumer Goods',
-      manufacturer: aiResult?.evidence_package?.manufacturer || 'Registered Manufacturer',
-      nafdacNumber,
-      batchNumber: aiResult?.evidence_package?.batch_number || 'AI-Verified',
-      expiryDate: aiResult?.evidence_package?.expiry_date || 'Valid',
-      status,
-      isSuspicious,
-      similarity: confidence,
-      confidence,
-      action: aiResult?.action || (isSuspicious ? 'CAUTION' : 'BUY'),
-      instruction: aiResult?.simple_instruction || (
-        isSuspicious
-          ? 'This product shows some irregularities. Proceed with caution.'
-          : 'This product appears authentic. Safe to purchase.'
-      ),
-      summary: aiResult?.summary || '',
-      detail: aiResult?.detail || '',
-      warnings: aiResult?.warnings || [],
-      signalsUsed: aiResult?.signals_used || [],
-      location: scanLocation || (scanLat && scanLng ? `${scanLat.toFixed(4)}° N, ${scanLng.toFixed(4)}° E` : 'Location unavailable'),
-      latitude: scanLat,
-      longitude: scanLng,
-      time: 'Today, ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      verified: true,
-      timestamp: new Date().toISOString(),
+      const data = {
+        id: scanId || `scan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        product: aiResult?.evidence_package?.product_name || 'Verified Product',
+        productImage: productImage || null,
+        category: aiResult?.evidence_package?.category || 'Consumer Goods',
+        manufacturer: aiResult?.evidence_package?.manufacturer || 'Registered Manufacturer',
+        nafdacNumber,
+        batchNumber: aiResult?.evidence_package?.batch_number || 'AI-Verified',
+        expiryDate: aiResult?.evidence_package?.expiry_date || 'Valid',
+        status,
+        isSuspicious,
+        similarity: confidence,
+        confidence,
+        action: aiResult?.action || (isSuspicious ? 'CAUTION' : 'BUY'),
+        instruction: aiResult?.simple_instruction || (
+          isSuspicious
+            ? 'This product shows some irregularities. Proceed with caution.'
+            : 'This product appears authentic. Safe to purchase.'
+        ),
+        summary: aiResult?.summary || '',
+        detail: aiResult?.detail || '',
+        warnings: aiResult?.warnings || [],
+        signalsUsed: aiResult?.signals_used || [],
+        location: scanLocation || (scanLat && scanLng ? `${scanLat.toFixed(4)}° N, ${scanLng.toFixed(4)}° E` : 'Location unavailable'),
+        latitude: scanLat,
+        longitude: scanLng,
+        time: 'Today, ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        verified: true,
+        timestamp: Date.now(),
+        date: new Date().toISOString(),
+      };
+
+      setScanData(data);
+      
+      // REMOVED: saveScan(data) - Backend already auto-saves!
+      console.log('Scan loaded (backend already saved this)');
     };
 
-    setScanData(data);
-    saveScanToHistory(data);
+    loadScan();
   }, []);
 
   if (!scanData) {
@@ -117,15 +128,21 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
         {/* Product Image */}
         <div className="p-4 border-b border-gray-100">
           <div className="bg-gray-100 rounded-xl h-48 flex items-center justify-center overflow-hidden">
-            <img 
-              src={scanData.productImage} 
-              alt={scanData.product}
-              className="w-full h-full object-contain"
-              onError={(e) => {
-                e.target.onerror = null;
-                e.target.src = 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400';
-              }}
-            />
+            {scanData.productImage ? (
+              <img 
+                src={scanData.productImage} 
+                alt={scanData.product}
+                className="w-full h-full object-contain"
+                onError={(e) => {
+                  e.target.onerror = null;
+                  e.target.src = 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400';
+                }}
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-gray-100">
+                <Icon name="Image" size={48} className="text-gray-300" library="fi" />
+              </div>
+            )}
           </div>
         </div>
 
@@ -304,7 +321,7 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
       <div className="mt-6 text-center">
         <div className="flex items-center justify-center gap-2 text-xs text-gray-400">
           <Icon name="Shield" size={14} className="text-primary" library="fi" />
-          <span>Verified by SabiLens AI • Report ID: {Math.random().toString(36).substr(2, 9).toUpperCase()}</span>
+          <span>Verified by SabiLens AI • Report ID: {scanData.id?.slice(-8).toUpperCase() || Math.random().toString(36).substr(2, 8).toUpperCase()}</span>
         </div>
       </div>
     </div>

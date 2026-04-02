@@ -13,6 +13,9 @@ class RegisterRequest(BaseModel):
     first_name: str = Field(..., min_length=1)
     last_name: str = Field(..., min_length=1)
     role: UserRole = UserRole.CONSUMER
+    # NEW: Location fields
+    state: Optional[str] = Field(None, max_length=100)
+    city: Optional[str] = Field(None, max_length=100)
 
 
 class LoginRequest(BaseModel):
@@ -84,6 +87,9 @@ class UserResponse(BaseModel):
     phone_verified: bool
     profile_image_url: Optional[str] = None
     preferred_language: str = "en"
+    # NEW: Location fields
+    state: Optional[str] = None
+    city: Optional[str] = None
     last_login: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
@@ -103,6 +109,10 @@ class ProfileUpdateRequest(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     preferred_language: Optional[str] = None
+    # NEW: Location fields for profile update
+    state: Optional[str] = None
+    city: Optional[str] = None
+    email: Optional[EmailStr] = None
 
 
 class AvatarUploadResponse(BaseModel):

@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-route
 import ScrollToTop from './components/common/ScrollToTop';
 
 // Consumer Pages
+import ScanResultSuspicious from './components/consumer/Scan/ScanResultSuspicious';
 import MobileSplash from './pages/consumer/MobileSplash';
 import LandingPage from './pages/consumer/LandingPage';
 import Onboarding from './pages/consumer/Onboarding';
@@ -123,6 +124,7 @@ function App() {
         <Route path="/mobile-splash" element={<MobileSplash />} />
         <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/role-select" element={<RoleSelect />} />
+        <Route path="/scan/suspicious" element={<ScanResultSuspicious />} />
         
         {/* Consumer Auth */}
         <Route path="/signup" element={<ConsumerSignup />} />
