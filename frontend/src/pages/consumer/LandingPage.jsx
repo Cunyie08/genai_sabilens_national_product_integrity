@@ -25,6 +25,36 @@ const LandingPage = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, [navigate]);
 
+  // ── SECRET ADMIN ACCESS: type /admin on keyboard to navigate to admin login ──
+  useEffect(() => {
+    let typed = '';
+    let resetTimer;
+
+    const handleKeyDown = (e) => {
+      if (e.key.length > 1 && e.key !== '/') return;
+
+      typed += e.key;
+
+      if (typed.includes('/admin')) {
+        typed = '';
+        navigate('/admin');
+        return;
+      }
+
+      clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => {
+        typed = '';
+      }, 2000);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      clearTimeout(resetTimer);
+    };
+  }, [navigate]);
+  // ─────────────────────────────────────────────────────────────────────────────
+
   return (
     <div className="min-h-screen bg-background font-sans selection:bg-primary/20 selection:text-primary-dark">
       <LandingHeader isTransparent={false} />
