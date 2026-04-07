@@ -167,6 +167,10 @@ async def _save_scan_to_db(
     Persist the scan result to the database.
     Returns the saved scan_id, or None if the save failed.
     """
+    # Don't save non-product detections
+    if data.get("verdict") in ("INVALID_IMAGE",):
+        return None
+
     try:
         scan_id = uuid.UUID(data["scan_id"])
         
@@ -179,7 +183,7 @@ async def _save_scan_to_db(
                 logger.info(f"Scan {scan_id} already exists, skipping duplicate save")
                 return str(scan_id)
         
-        evidence = data.get("evidence_package", {})
+        evidence = data.get("evidence_package") or {}
 
         lat = req.latitude if req.latitude is not None and req.latitude != 0.0 else None
         lng = req.longitude if req.longitude is not None and req.longitude != 0.0 else None
