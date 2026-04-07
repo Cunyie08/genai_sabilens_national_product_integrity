@@ -35,6 +35,19 @@ def create_app() -> FastAPI:
 
     app.include_router(router)
 
+    @app.on_event("startup")
+    async def startup():
+        from ai_engine.agent import agent_scorer  # already loaded — just confirms it
+        count = _retriever_count()
+        print(f"[Startup] ✅ Agent ready. ChromaDB has {count} documents indexed.")
+
+    def _retriever_count():
+        try:
+            from ai_engine.api.routes import _retriever
+            return _retriever.store.count()
+        except Exception:
+            return "unknown"
+
     @app.get("/", tags=["Root"])
     async def root():
         """Root ping — confirms the service is running."""
