@@ -6,16 +6,21 @@ Exposes the same compute_verification_score() signature so routes.py needs only 
 from ai_engine.agent.verification_agent import NAFDACVerificationAgent
 from ai_engine.agent.reasoning_engine   import AgentVerdict
 
-_agent: NAFDACVerificationAgent | None = None  # shared singleton, created lazily on first call
+# _agent: NAFDACVerificationAgent | None = None  # shared singleton, created lazily on first call
 
-
+# AFTER — eager, costs ~5 sec at startup, zero per scan
+_agent = NAFDACVerificationAgent()   # loads once when module imports
 
 def _get_agent() -> NAFDACVerificationAgent:
-    """Return the shared agent instance, creating it on first call."""
-    global _agent
-    if _agent is None:
-        _agent = NAFDACVerificationAgent()  # expensive: loads ChromaDB + model — only runs once
     return _agent
+
+
+# def _get_agent() -> NAFDACVerificationAgent:
+#     """Return the shared agent instance, creating it on first call."""
+#     global _agent
+#     if _agent is None:
+#         _agent = NAFDACVerificationAgent()  # expensive: loads ChromaDB + model — only runs once
+#     return _agent
 
 
 
