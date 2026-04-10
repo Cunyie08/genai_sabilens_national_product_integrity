@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import ScrollToTop from './components/common/ScrollToTop';
 
-// Consumer Pages
+// Consumer Pages fixed
 import MobileSplash from './pages/consumer/MobileSplash';
 import LandingPage from './pages/consumer/LandingPage';
 import Onboarding from './pages/consumer/Onboarding';
