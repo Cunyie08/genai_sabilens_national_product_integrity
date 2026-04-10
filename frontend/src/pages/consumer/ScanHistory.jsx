@@ -20,7 +20,7 @@ const ScanHistory = () => {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [sortOrder, setSortOrder] = useState('newest');
   const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const [isClearing, setIsClearing] = useState(false); // Loading state for clear history
+  const [isClearing, setIsClearing] = useState(false);
   const [showSkeleton, setShowSkeleton] = useState(true);
   const hasLoadedRef = useRef(false);
   const scansCacheRef = useRef([]);
@@ -29,16 +29,13 @@ const ScanHistory = () => {
   // Load scans from cache first, then refresh
   const loadScans = async (showCache = true) => {
     try {
-      // First, load from cache if available (shows immediately)
       if (showCache && scansCacheRef.current.length > 0) {
         setScans(scansCacheRef.current);
         setStats(statsCacheRef.current);
         setShowSkeleton(false);
       }
       
-      // Then refresh from backend (gets latest)
       const freshHistory = await getUserScanHistory();
-      // Remove duplicates by ID
       const uniqueFreshScans = [];
       const seenFreshIds = new Set();
       for (const scan of freshHistory) {
@@ -48,7 +45,6 @@ const ScanHistory = () => {
         }
       }
       
-      // Update cache
       scansCacheRef.current = uniqueFreshScans;
       setScans(uniqueFreshScans);
       
@@ -72,10 +68,9 @@ const ScanHistory = () => {
     }
   }, []);
 
-  // Refresh scans when coming back to page
   useEffect(() => {
     const handleFocus = () => {
-      loadScans(false); // Refresh without showing cache first
+      loadScans(false);
     };
     
     window.addEventListener('focus', handleFocus);
@@ -108,17 +103,83 @@ const ScanHistory = () => {
   };
 
   const handleScanClick = (scan) => {
+    console.log('Scan clicked:', scan); // Debug log
     setSelectedScan(scan);
   };
 
   const handleViewDetails = () => {
     if (selectedScan) {
-      if (selectedScan.status === 'authentic') {
+      // Get status - ensure it's lowercase
+      let statusLower = (selectedScan.status || '').toLowerCase();
+      
+      // Debug log
+      console.log('Selected scan status:', selectedScan.status, 'Normalized:', statusLower);
+      
+      // Fallback - if status is empty, try to determine from other fields
+      if (!statusLower || statusLower === '') {
+        if (selectedScan.verified === true) {
+          statusLower = 'authentic';
+        } else if (selectedScan.similarity && selectedScan.similarity < 30) {
+          statusLower = 'fake';
+        } else {
+          statusLower = 'suspicious';
+        }
+      }
+      
+      const statusUpper = statusLower === 'authentic' ? 'AUTHENTIC' : statusLower === 'fake' ? 'FAKE' : 'SUSPICIOUS';
+      const confidenceValue = selectedScan.similarity || (statusLower === 'authentic' ? 92 : statusLower === 'fake' ? 95 : 55);
+      
+      sessionStorage.setItem('currentScan', JSON.stringify({
+        productImage: selectedScan.productImage,
+        imageUrl: selectedScan.productImage,
+        product_name: selectedScan.product,
+        aiResult: {
+          final_verdict: statusUpper,
+          confidence_score: confidenceValue / 100,
+          display_confidence: confidenceValue,
+          confidence_label: statusLower === 'authentic' ? 'Authenticity Confidence' : statusLower === 'fake' ? 'Counterfeit Confidence' : 'Suspicion Confidence',
+          simple_instruction: selectedScan.instruction || (
+            statusLower === 'authentic' 
+              ? 'This product appears authentic. Safe to purchase.'
+              : statusLower === 'fake'
+              ? 'Do not buy this product. It appears to be counterfeit.'
+              : 'This product shows some irregularities. Please verify before use.'
+          ),
+          evidence_package: {
+            product_name: selectedScan.product,
+            category: selectedScan.category,
+            manufacturer: selectedScan.manufacturer,
+            nafdac_number: selectedScan.nafdacNumber,
+            batch_number: selectedScan.batchNumber,
+            expiry_date: selectedScan.expiryDate
+          },
+          warnings: selectedScan.warnings || [],
+          signals_used: selectedScan.signalsUsed || [],
+          summary: selectedScan.summary || '',
+          detail: selectedScan.detail || '',
+          severity: selectedScan.severity || (statusLower === 'fake' ? 'CRITICAL' : statusLower === 'suspicious' ? 'MEDIUM' : 'LOW'),
+          action: selectedScan.action || (statusLower === 'fake' ? 'DO NOT BUY' : statusLower === 'suspicious' ? 'VERIFY BEFORE USE' : 'BUY')
+        },
+        fromHistory: true,
+        scan_id: selectedScan.id,
+        location: selectedScan.location,
+        latitude: selectedScan.latitude,
+        longitude: selectedScan.longitude
+      }));
+      
+      // Close modal first, then navigate
+      setSelectedScan(null);
+      
+      // Navigate based on status
+      console.log('Navigating to:', statusLower);
+      if (statusLower === 'authentic') {
         navigate('/scan/safe');
-      } else if (selectedScan.status === 'fake') {
+      } else if (statusLower === 'fake') {
         navigate('/scan/fake');
-      } else {
+      } else if (statusLower === 'suspicious') {
         navigate('/scan/suspicious');
+      } else {
+        navigate('/scan/suspicious'); // Default to suspicious
       }
     }
   };
@@ -127,7 +188,6 @@ const ScanHistory = () => {
     setIsClearing(true);
     try {
       await clearScanHistory();
-      // Clear cache as well
       scansCacheRef.current = [];
       statsCacheRef.current = { total: 0, authentic: 0, suspicious: 0, fake: 0 };
       await loadScans(false);
@@ -140,7 +200,8 @@ const ScanHistory = () => {
   };
 
   const getStatusBadge = (status) => {
-    switch(status) {
+    const statusLower = (status || '').toLowerCase();
+    switch(statusLower) {
       case 'authentic':
         return <span className="px-2 py-0.5 bg-success/10 text-success text-xs rounded-full font-medium">Authentic</span>;
       case 'suspicious':
@@ -153,7 +214,8 @@ const ScanHistory = () => {
   };
 
   const getStatusIcon = (status) => {
-    switch(status) {
+    const statusLower = (status || '').toLowerCase();
+    switch(statusLower) {
       case 'authentic':
         return <Icon name="CheckCircle" size={20} className="text-success" library="fi" />;
       case 'suspicious':
@@ -167,7 +229,6 @@ const ScanHistory = () => {
 
   const filteredScans = getFilteredScans();
 
-  // Image fallback handler
   const handleImageError = (e) => {
     e.target.style.display = 'none';
     const parent = e.target.parentElement;
@@ -182,7 +243,6 @@ const ScanHistory = () => {
     }
   };
 
-  // Skeleton loader component
   const SkeletonCard = () => (
     <Card className="p-3 animate-pulse">
       <div className="flex gap-3">
@@ -223,7 +283,7 @@ const ScanHistory = () => {
         </div>
       </div>
 
-      {/* Stats Summary - Responsive grid */}
+      {/* Stats Summary */}
       <div className="px-4 py-3">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <Card className="p-2 text-center">
@@ -306,7 +366,7 @@ const ScanHistory = () => {
         </div>
       </div>
 
-      {/* Scans List - Shows skeleton on initial load, then cached data */}
+      {/* Scans List */}
       <div className="px-4 py-3">
         {showSkeleton && isInitialLoad ? (
           <div className="space-y-2.5">
@@ -323,7 +383,6 @@ const ScanHistory = () => {
                 onClick={() => handleScanClick(scan)}
               >
                 <div className="flex gap-3">
-                  {/* Product Image */}
                   <div className="w-16 h-16 rounded-xl overflow-hidden bg-gray-100 flex-shrink-0">
                     {scan.productImage ? (
                       <img 
@@ -339,7 +398,6 @@ const ScanHistory = () => {
                     )}
                   </div>
                   
-                  {/* Scan Details */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2 mb-1">
                       <h3 className="font-semibold text-gray-900 text-sm truncate flex-1">{scan.product || 'Unknown Product'}</h3>
@@ -359,7 +417,6 @@ const ScanHistory = () => {
                       </div>
                     </div>
                     
-                    {/* Similarity Bar for non-authentic items */}
                     {scan.status !== 'authentic' && scan.similarity && (
                       <div className="mt-2">
                         <div className="flex justify-between text-xs mb-0.5">
@@ -504,11 +561,10 @@ const ScanHistory = () => {
         }
       />
 
-      {/* Clear History Confirmation Modal with Loading Spinner */}
+      {/* Clear History Confirmation Modal */}
       {showClearModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
-            {/* Cancel Icon at Top Right */}
             <button
               onClick={() => setShowClearModal(false)}
               disabled={isClearing}
@@ -517,7 +573,6 @@ const ScanHistory = () => {
               <Icon name="X" size={16} className="text-gray-500" library="fi" />
             </button>
 
-            {/* Content */}
             <div className="p-6 pt-8">
               <div className="text-center mb-6">
                 <div className="w-16 h-16 bg-warning/10 rounded-full flex items-center justify-center mx-auto mb-4">
