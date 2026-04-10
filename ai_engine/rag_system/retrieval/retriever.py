@@ -82,17 +82,14 @@ class ProductRetriever:
             # Cannot normalise — no lookup possible
             return []
 
-        results = self.store.query(
-            query_embedding = self.embedder.embed_single(nafdac_clean),
-            n_results       = 10,   # Allow duplicates; typical is 1
-            where           = {"nafdac_no_clean": nafdac_clean},
+                # AFTER — direct metadata fetch, no embedding needed
+        results = self.store.collection.get(
+            where   = {"nafdac_no_clean": nafdac_clean},
+            include = ["metadatas"],
         )
-
-        if not results["ids"] or not results["ids"][0]:
+        if not results["ids"]:
             return []
-
-        return [results["metadatas"][0][i] for i in range(len(results["ids"][0]))]
-
+        return results["metadatas"]
     # ── Strategy 2: Semantic product text search ──────────────────────────────
 
     def retrieve_by_product_text(

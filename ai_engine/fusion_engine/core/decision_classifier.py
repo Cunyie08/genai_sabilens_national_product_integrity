@@ -153,6 +153,8 @@ def classify(fusion_result: dict) -> dict:
             "timestamp":          str,
         }
     """
+
+
     verdict         = fusion_result.get("verdict", "FAKE")
     final_score     = fusion_result.get("final_score", 0.0)
     severity        = fusion_result.get("severity", "CRITICAL")
@@ -162,6 +164,18 @@ def classify(fusion_result: dict) -> dict:
     warnings        = fusion_result.get("warnings", [])
     evidence        = fusion_result.get("evidence", {})
     breakdown       = fusion_result.get("breakdown", {})
+
+        # Override simple instruction for NOT_FOUND; different from a confirmed fake
+    reg_status = fusion_result.get("evidence", {}).get("reg_status_code", "")
+    if verdict == "FAKE" and reg_status == "NOT_FOUND":
+        simple_instruction = (
+            "We could not verify this product in our database. "
+            "This product may be genuine but "
+            "is not yet in our verified product registry. "
+            "Check directly with NAFDAC at www.nafdac.gov.ng to confirm."
+        )
+    else:
+        simple_instruction = _SIMPLE_INSTRUCTIONS.get(verdict, _SIMPLE_INSTRUCTIONS["FAKE"])
 
     # Core classification 
     action           = _ACTION_MAP.get(verdict, "DO NOT BUY THIS PRODUCT. IT IS A COUNTERFEIT.")
@@ -248,8 +262,10 @@ def _build_instruction(verdict: str, fusion_result: dict) -> str:
         elif reg_status == "NOT_FOUND":
             nafdac_str = f" '{nafdac}'" if nafdac else ""
             base += (
-                f" The NAFDAC number{nafdac_str} does not exist in any "
-                f"registered product database."
+            f" The NAFDAC number{nafdac_str} could not be verified "
+            f"in our current database. This product may be genuine but "
+            f"is not yet in our verified product registry. "
+            f"Check directly with NAFDAC at www.nafdac.gov.ng to confirm."
             )
         elif reg_status == "EXPIRED":
             base += (
@@ -261,6 +277,7 @@ def _build_instruction(verdict: str, fusion_result: dict) -> str:
                 "The NAFDAC verification system could not be reached. "
                 "Authenticity cannot be confirmed. Do not purchase this product."
             )
+        
 
     elif verdict == "AUTHENTIC":
         base += f" Confirmed product: {product_name}."

@@ -90,39 +90,91 @@ class DetectProductResponse(BaseModel):
 # ── Verdict normalisation ─────────────────────────────────────────────────────
 
 def _normalise_result(ai_result: dict) -> dict:
-    """
-    Pass the AI engine verdict through unchanged to the frontend.
-    Always returns a dict safe for JSON serialisation.
-    """
-    verdict = ai_result.get("final_verdict", "FAKE")
+    verdict    = ai_result.get("final_verdict", "FAKE")
     confidence = ai_result.get("final_score", 0.0)
 
+    # Handle non-product image early exit
+    if verdict == "INVALID_IMAGE":
+        return {
+            "scan_id":            ai_result.get("scan_id") or str(uuid.uuid4()),
+            "verdict":            "INVALID_IMAGE",
+            "final_verdict":      "INVALID_IMAGE",
+            "confidence_score":   0.0,
+            "confidence_pct":     0.0,
+            "severity":           "NONE",
+            "action":             "INVALID IMAGE",
+            "simple_instruction": "No product detected. Please take a clear photo of the product label and try again.",
+            "status":             "INVALID_IMAGE",
+            "summary":            "The image does not appear to contain a product label.",
+            "detail":             "",
+            "report_priority":    "NONE",
+            "override_applied":   True,
+            "override_summary":   "NO_PRODUCT_DETECTED",
+            "warnings":           ai_result.get("warnings", []),
+            "breakdown":          {},
+            "evidence_package":   {},
+            "rescan_required":    False,
+            "signals_used":       [],
+            "ai_signals":         {"ocr_mocked": False, "vision_mocked": False},
+            "display_confidence":     0.0,
+            "confidence_label":       "No product detected",
+            "confidence_description": "",
+        }
+
+    # Compute user-friendly confidence display
+    verdict_upper  = verdict.upper()
+    raw_confidence = round(confidence * 100, 1)
+
+    if verdict_upper == "AUTHENTIC":
+        display_confidence     = raw_confidence
+        confidence_label       = f"{raw_confidence}% match to authentic product"
+        confidence_description = "AI is confident this product is genuine"
+    elif verdict_upper == "FAKE":
+        display_confidence     = round(100 - raw_confidence, 1)
+        confidence_label       = f"{display_confidence}% confidence this is counterfeit"
+        confidence_description = "AI has identified this product as counterfeit"
+    elif verdict_upper == "SUSPICIOUS":
+        display_confidence     = raw_confidence
+        confidence_label       = f"{raw_confidence}% — further verification recommended"
+        confidence_description = "AI flagged concerns but could not confirm counterfeit"
+    elif verdict_upper == "RESCAN_REQUIRED":
+        display_confidence     = 0.0
+        confidence_label       = "Image too blurry to scan"
+        confidence_description = "Please retake the photo in better lighting"
+    else:
+        display_confidence     = raw_confidence
+        confidence_label       = f"{raw_confidence}%"
+        confidence_description = ""
+
     return {
-        "scan_id": ai_result.get("scan_id") or str(uuid.uuid4()),
-        "verdict": verdict,
-        "final_verdict": verdict,
-        "confidence_score": round(confidence, 4),
-        "confidence_pct": round(confidence * 100, 1),
-        "severity": ai_result.get("final_severity", "CRITICAL"),
-        "action": ai_result.get("action", "DO NOT BUY"),
+        "scan_id":            ai_result.get("scan_id") or str(uuid.uuid4()),
+        "verdict":            verdict,
+        "final_verdict":      verdict,
+        "confidence_score":   round(confidence, 4),
+        "confidence_pct":     raw_confidence,
+        # User-friendly display fields — frontend should use these instead of confidence_score
+        "display_confidence":     display_confidence,
+        "confidence_label":       confidence_label,
+        "confidence_description": confidence_description,
+        "severity":           ai_result.get("final_severity", "CRITICAL"),
+        "action":             ai_result.get("action", "DO NOT BUY"),
         "simple_instruction": ai_result.get("simple_instruction", ""),
-        "status": ai_result.get("status", "FAILSAFE"),
-        "summary": ai_result.get("summary", ""),
-        "detail": ai_result.get("detail", ""),
-        "report_priority": ai_result.get("report_priority", "NONE"),
-        "override_applied": ai_result.get("override_applied", False),
-        "override_summary": ai_result.get("override_summary", ""),
-        "warnings": ai_result.get("warnings", []),
-        "breakdown": ai_result.get("breakdown", {}),
-        "evidence_package": ai_result.get("evidence_package", {}),
-        "rescan_required": ai_result.get("rescan_required", False),
-        "signals_used": ai_result.get("signals_used", []),
+        "status":             ai_result.get("status", "FAILSAFE"),
+        "summary":            ai_result.get("summary", ""),
+        "detail":             ai_result.get("detail", ""),
+        "report_priority":    ai_result.get("report_priority", "NONE"),
+        "override_applied":   ai_result.get("override_applied", False),
+        "override_summary":   ai_result.get("override_summary", ""),
+        "warnings":           ai_result.get("warnings", []),
+        "breakdown":          ai_result.get("breakdown", {}),
+        "evidence_package":   ai_result.get("evidence_package", {}),
+        "rescan_required":    ai_result.get("rescan_required", False),
+        "signals_used":       ai_result.get("signals_used", []),
         "ai_signals": {
-            "ocr_mocked": ai_result.get("ocr_mocked", True),
+            "ocr_mocked":    ai_result.get("ocr_mocked", True),
             "vision_mocked": ai_result.get("vision_mocked", True),
         },
     }
-
 
 async def _save_scan_to_db(
     data: dict,
@@ -134,6 +186,10 @@ async def _save_scan_to_db(
     Persist the scan result to the database.
     Returns the saved scan_id, or None if the save failed.
     """
+    # Don't save non-product detections
+    if data.get("verdict") in ("INVALID_IMAGE",):
+        return None
+
     try:
         scan_id = uuid.UUID(data["scan_id"])
         
@@ -146,7 +202,7 @@ async def _save_scan_to_db(
                 logger.info(f"Scan {scan_id} already exists, skipping duplicate save")
                 return str(scan_id)
         
-        evidence = data.get("evidence_package", {})
+        evidence = data.get("evidence_package") or {}
 
         lat = req.latitude if req.latitude is not None and req.latitude != 0.0 else None
         lng = req.longitude if req.longitude is not None and req.longitude != 0.0 else None
