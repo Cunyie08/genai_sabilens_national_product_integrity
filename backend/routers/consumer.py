@@ -2,6 +2,7 @@
 Consumer scan endpoints.
 
 POST /api/consumer/scan  — submit image + metadata, get AI verdict immediately
+POST /api/consumer/scan/detect-product — quick product detection for front panel
 GET  /api/consumer/scan/{scan_id} — retrieve a previously stored scan result
 GET  /api/consumer/scans — list the current user's scan history (requires JWT)
 DELETE /api/consumer/scan/{scan_id} — delete a specific scan
@@ -11,14 +12,19 @@ DELETE /api/consumer/scans/clear — clear all scan history
 import uuid
 import logging
 import asyncio
+import base64
+import tempfile
+import os
+from io import BytesIO
 from typing import Optional
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func
+from PIL import Image
 
 from backend.database import get_db, AsyncSessionLocal
 from backend.utils.response import success_response, error_response
@@ -66,6 +72,19 @@ class ScanCreateRequest(BaseModel):
     confidence_score: Optional[float] = None
     scan_data: Optional[dict] = None
     timestamp: Optional[float] = None  # Add timestamp field
+
+
+class DetectProductRequest(BaseModel):
+    """Payload for quick product detection."""
+    image_data: str = Field(..., description="Base64 encoded image data")
+    phase: Optional[str] = Field("front", description="Scan phase: front or back")
+
+
+class DetectProductResponse(BaseModel):
+    """Response for product detection."""
+    has_product: bool
+    confidence: float
+    message: str
 
 
 # ── Verdict normalisation ─────────────────────────────────────────────────────
@@ -186,7 +205,106 @@ async def _save_scan_to_db(
         return None
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# ── Quick Product Detection Endpoint ─────────────────────────────────────────
+
+@router.post("/scan/detect-product", response_model=DetectProductResponse)
+async def detect_product(
+    req: DetectProductRequest,
+    current_user=Depends(get_optional_user),
+):
+    """
+    Quick detection to check if a product is present in the image.
+    Used during front panel capture to validate before proceeding.
+    """
+    if not req.image_data:
+        raise HTTPException(status_code=400, detail="image_data is required")
+
+    temp_path = None
+    
+    try:
+        # Remove data URL prefix if present
+        image_data = req.image_data
+        if image_data.startswith('data:image'):
+            image_data = image_data.split(',')[1]
+        
+        # Decode base64 to image
+        try:
+            image_bytes = base64.b64decode(image_data)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid base64 image data")
+
+        # Save temporarily to disk for OCR processing
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+            pil_image = Image.open(BytesIO(image_bytes))
+            # Convert RGBA to RGB if needed
+            if pil_image.mode == 'RGBA':
+                pil_image = pil_image.convert('RGB')
+            pil_image.save(tmp_file.name, 'JPEG', quality=85)
+            temp_path = tmp_file.name
+        
+        # Use your existing OCR extractor
+        try:
+            from ocr_linguistic.extractor import extract_text_blocks, build_raw_text
+            
+            # Extract text blocks from the image
+            blocks = extract_text_blocks(temp_path)
+            raw_text = build_raw_text(blocks)
+            text_length = len(raw_text.strip()) if raw_text else 0
+            
+            # Simple heuristic: product labels usually have text
+            if text_length > 30:
+                has_product = True
+                confidence = min(0.95, text_length / 150)
+            elif text_length > 10:
+                has_product = True
+                confidence = 0.65
+            elif text_length > 0:
+                has_product = True
+                confidence = 0.45
+            else:
+                # No text detected - check if there's any OCR blocks at all
+                has_product = len(blocks) > 0
+                confidence = 0.25 if has_product else 0.15
+            
+            message = "Product detected" if has_product else "No product detected. Please ensure the product label is clearly visible and well-lit."
+            
+            logger.info(f"Product detection: has_product={has_product}, confidence={confidence}, text_length={text_length}, blocks={len(blocks)}")
+            
+            return DetectProductResponse(
+                has_product=has_product,
+                confidence=round(confidence, 2),
+                message=message
+            )
+            
+        except ImportError as e:
+            # Fallback if OCR module not available
+            logger.warning(f"OCR module import error: {e}")
+            # Simple fallback: assume product exists if image has reasonable size
+            image_size = len(image_bytes)
+            has_product = image_size > 10000  # >10KB
+            confidence = 0.5 if has_product else 0.3
+            
+            return DetectProductResponse(
+                has_product=has_product,
+                confidence=confidence,
+                message="Product detection limited (OCR unavailable)"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Product detection failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Product detection failed: {str(exc)}")
+    finally:
+        # Clean up temp file
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except Exception as e:
+                logger.warning(f"Failed to delete temp file {temp_path}: {e}")
+
+
+# ── Main Scan Endpoint ────────────────────────────────────────────────────────
 
 @router.post("/scan")
 async def submit_scan(
@@ -224,19 +342,16 @@ async def submit_scan(
             data["image_url"] = image_url
             logger.info("Front image uploaded: %s", image_url)
 
-        for attr, key, label in [
-            ("back_image_data", "back_image_url", "Back"),
-        ]:
-            raw = getattr(req, attr, None)
-            if raw:
-                url = await loop.run_in_executor(_upload_executor, upload_scan_image, raw)
-                if url:
-                    data[key] = url
-                    logger.info("%s image uploaded: %s", label, url)
+        # Upload back image if present
+        if req.back_image_data:
+            back_url = await loop.run_in_executor(_upload_executor, upload_scan_image, req.back_image_data)
+            if back_url:
+                data["back_image_url"] = back_url
+                logger.info("Back image uploaded: %s", back_url)
 
         # Save scan to DB in background
-        user_id = current_user.id if current_user else None
-        asyncio.create_task(_save_scan_to_db(data, req, image_url, user_id=user_id))
+        # user_id = current_user.id if current_user else None
+        # asyncio.create_task(_save_scan_to_db(data, req, image_url, user_id=user_id))
 
         return success_response(data=data, message="Scan analysis complete")
 
@@ -244,6 +359,8 @@ async def submit_scan(
         logger.exception("Scan pipeline failed: %s", exc)
         return error_response(str(exc), code="SCAN_ERROR", status_code=500)
 
+
+# ── Scan History Endpoints ────────────────────────────────────────────────────
 
 @router.get("/scans")
 async def get_user_scans(
