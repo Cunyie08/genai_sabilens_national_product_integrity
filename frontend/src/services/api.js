@@ -82,6 +82,18 @@ export const scanApi = {
   submitScan: (payload) =>
     request('/api/consumer/scan', { method: 'POST', body: JSON.stringify(payload) }),
 
+  /**
+   * Quick product detection for front panel.
+   * Checks if a product is present in the captured image.
+   *
+   * @param {object} payload
+   * @param {string} payload.image_data - base64 image data (without data:image prefix or with)
+   * @param {string} [payload.phase] - 'front' or 'back' (default: 'front')
+   * @returns {Promise<{has_product: boolean, confidence: number, message: string}>}
+   */
+  detectProduct: (payload) =>
+    request('/api/consumer/scan/detect-product', { method: 'POST', body: JSON.stringify(payload) }),
+
   /** Liveness check for the consumer scan service. */
   health: () => request('/api/consumer/scan/health'),
 

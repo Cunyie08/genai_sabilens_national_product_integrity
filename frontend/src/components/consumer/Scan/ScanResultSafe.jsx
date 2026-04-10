@@ -3,12 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import Icon from '../../common/Icon';
 import Card from '../../common/Card';
 import Button from '../../common/Button';
-// Remove saveScan import - NOT NEEDED
-// import { saveScan } from '../../../services/scanHistory';
 
 const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
   const navigate = useNavigate();
   const [scanData, setScanData] = useState(null);
+  const [locationName, setLocationName] = useState('');
 
   useEffect(() => {
     const loadScan = async () => {
@@ -32,45 +31,39 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
         } catch {}
       }
 
-      // Extract fields from real AI result when available
-      const verdictRaw = aiResult?.final_verdict || 'AUTHENTIC';
-      const isSuspicious = verdictRaw === 'SUSPICIOUS';
-      const confidence = aiResult?.confidence_pct ?? (aiResult?.confidence_score != null
-        ? Math.round((aiResult.confidence_score || 0) * 100)
-        : 92);
+      const displayConfidence = aiResult?.display_confidence ?? (
+        aiResult?.confidence_pct ?? (
+          aiResult?.confidence_score != null
+            ? Math.round((aiResult.confidence_score || 0) * 100)
+            : 92
+        )
+      );
+      
+      const confidenceLabel = aiResult?.confidence_label || 'Authenticity Confidence';
 
-      // Extract NAFDAC number from evidence package or breakdown
       const evidence = aiResult?.evidence_package || {};
       const regPayload = aiResult?.breakdown?.reg || {};
-      const nafdacNumber = evidence?.nafdac_number
-        || regPayload?.nafdac_number
-        || 'Extracted by AI';
-
-      const status = isSuspicious ? 'suspicious' : 'authentic';
+      const nafdacNumber = evidence?.nafdac_number || regPayload?.nafdac_number || 'Extracted by AI';
 
       const data = {
         id: scanId || `scan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        product: aiResult?.evidence_package?.product_name || 'Verified Product',
+        product: evidence?.product_name || 'Verified Product',
         productImage: productImage || null,
-        category: aiResult?.evidence_package?.category || 'Consumer Goods',
-        manufacturer: aiResult?.evidence_package?.manufacturer || 'Registered Manufacturer',
+        category: evidence?.category || 'Consumer Goods',
+        manufacturer: evidence?.manufacturer || 'Registered Manufacturer',
         nafdacNumber,
-        batchNumber: aiResult?.evidence_package?.batch_number || 'AI-Verified',
-        expiryDate: aiResult?.evidence_package?.expiry_date || 'Valid',
-        status,
-        isSuspicious,
-        similarity: confidence,
-        confidence,
-        action: aiResult?.action || (isSuspicious ? 'CAUTION' : 'BUY'),
-        instruction: aiResult?.simple_instruction || (
-          isSuspicious
-            ? 'This product shows some irregularities. Proceed with caution.'
-            : 'This product appears authentic. Safe to purchase.'
-        ),
+        batchNumber: evidence?.batch_number || 'AI-Verified',
+        expiryDate: evidence?.expiry_date || 'Valid',
+        status: 'authentic',
+        similarity: displayConfidence,
+        confidence: displayConfidence,
+        confidenceLabel: confidenceLabel,
+        action: aiResult?.action || 'BUY',
+        instruction: aiResult?.simple_instruction || 'This product appears authentic. Safe to purchase.',
         summary: aiResult?.summary || '',
         detail: aiResult?.detail || '',
         warnings: aiResult?.warnings || [],
-        signalsUsed: aiResult?.signals_used || [],
+        signalsUsed: aiResult?.signals_used || ['reg', 'visual', 'ocr'],
         location: scanLocation || (scanLat && scanLng ? `${scanLat.toFixed(4)}° N, ${scanLng.toFixed(4)}° E` : 'Location unavailable'),
         latitude: scanLat,
         longitude: scanLng,
@@ -81,13 +74,39 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
       };
 
       setScanData(data);
-      
-      // REMOVED: saveScan(data) - Backend already auto-saves!
-      console.log('Scan loaded (backend already saved this)');
+
+      // Convert coordinates to location name
+      if (scanLat && scanLng) {
+        try {
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${scanLat}&lon=${scanLng}&zoom=18&addressdetails=1`
+          );
+          const result = await response.json();
+          if (result.display_name) {
+            const address = result.address;
+            const city = address.city || address.town || address.village || '';
+            const state = address.state || '';
+            const country = address.country || '';
+            setLocationName([city, state, country].filter(Boolean).join(', '));
+          } else {
+            setLocationName(scanLocation || `${scanLat.toFixed(4)}° N, ${scanLng.toFixed(4)}° E`);
+          }
+        } catch (error) {
+          console.error('Geocoding error:', error);
+          setLocationName(scanLocation || `${scanLat.toFixed(4)}° N, ${scanLng.toFixed(4)}° E`);
+        }
+      } else {
+        setLocationName(scanLocation || 'Location unavailable');
+      }
     };
 
     loadScan();
   }, []);
+
+  const handleRescan = () => {
+    sessionStorage.removeItem('currentScan');
+    navigate('/scan');
+  };
 
   if (!scanData) {
     return (
@@ -98,31 +117,26 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
   }
 
   return (
-    <div className="px-6 py-8">
-      {/* Back Button */}
+    <div className="px-6 py-4">
+      {/* Back Button - Circle */}
       <button
         onClick={onBack}
-        className="mb-6"
+        className="mb-6 w-10 h-10 rounded-full bg-white shadow-sm border border-gray-100 flex items-center justify-center hover:bg-gray-50 transition-all"
       >
-        <Icon name="ArrowLeft" size={24} className="text-gray-500" library="fi" />
+        <Icon name="ArrowLeft" size={20} className="text-gray-600" library="fi" />
       </button>
 
       {/* Result Card */}
       <Card className="mb-6 border-2 border-success/20 overflow-hidden">
-        {/* Success / Caution Banner */}
-        <div className={`p-6 text-center border-b ${scanData.isSuspicious ? 'bg-yellow-50 border-yellow-100' : 'bg-success/5 border-success/10'}`}>
-          <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 ${scanData.isSuspicious ? 'bg-yellow-100' : 'bg-success/10'}`}>
-            <Icon name={scanData.isSuspicious ? 'AlertTriangle' : 'CheckCircle'} size={40} className={scanData.isSuspicious ? 'text-yellow-600' : 'text-success'} library="fi" />
+        {/* Success Banner */}
+        <div className="bg-success/5 p-6 text-center border-b border-success/10">
+          <div className="w-20 h-20 bg-success/10 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Icon name="CheckCircle" size={40} className="text-success" library="fi" />
           </div>
-          <h1 className={`text-3xl font-bold mb-2 ${scanData.isSuspicious ? 'text-yellow-700' : 'text-success'}`}>
-            {scanData.isSuspicious ? 'PROCEED WITH CAUTION' : 'SAFE TO BUY'}
-          </h1>
-          <p className="text-gray-600 text-sm">{scanData.instruction}</p>
-          {scanData.isSuspicious && (
-            <div className="mt-3 inline-block bg-yellow-100 text-yellow-800 text-xs font-medium px-3 py-1 rounded-full">
-              AI Confidence: {scanData.confidence}%
-            </div>
-          )}
+          <h1 className="text-3xl font-bold text-success mb-2">SAFE TO BUY</h1>
+          <p className="text-gray-600">
+            {scanData.instruction}
+          </p>
         </div>
 
         {/* Product Image */}
@@ -146,148 +160,144 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
           </div>
         </div>
 
-        {/* Voice Report */}
+        {/* 1. Risk Assessment */}
         <div className="p-4 border-b border-gray-100">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Icon name="Volume2" size={18} className="text-primary" library="fi" />
-              <span className="text-sm font-medium text-gray-700">Listen to Report</span>
+          <h3 className="text-sm font-medium text-gray-700 mb-3">Risk Assessment</h3>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-success/5 p-3 rounded-lg text-center">
+              <p className="text-xl font-bold text-success">Low</p>
+              <p className="text-xs text-gray-500">Health Risk</p>
             </div>
-            <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full">
-              4 Languages
-            </span>
-          </div>
-          <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
-            <button className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center hover:bg-primary/20 transition-colors">
-              <Icon name="Play" size={18} className="text-primary" library="fi" />
-            </button>
-            <div className="flex-1">
-              <div className="h-2 bg-gray-200 rounded-full">
-                <div className="w-0 h-2 bg-primary rounded-full" />
-              </div>
+            <div className="bg-success/5 p-3 rounded-lg text-center">
+              <p className="text-xl font-bold text-success">Verified</p>
+              <p className="text-xs text-gray-500">Authenticity Level</p>
             </div>
-            <span className="text-xs text-gray-400">0:00</span>
-            <button className="p-2 hover:bg-gray-200 rounded-lg transition-colors">
-              <Icon name="Download" size={16} className="text-gray-400" library="fi" />
-            </button>
           </div>
         </div>
 
-        {/* Verification Details */}
-        <div className="p-4 space-y-4">
-          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-            <Icon name="Shield" size={18} className="text-primary" library="fi" />
-            VERIFICATION DETAILS
-          </h3>
-          
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-gray-50 p-3 rounded-xl">
-              <p className="text-xs text-gray-400 mb-1">NAFDAC Number</p>
-              <p className="font-mono font-medium text-sm">{scanData.nafdacNumber}</p>
-              <div className="flex items-center gap-1 mt-1">
-                <Icon name="Check" size={12} className="text-success" library="fi" />
-                <span className="text-xs text-success">Verified</span>
-              </div>
-            </div>
+        {/* 2. Confidence Label */}
+        <div className="p-4 border-b border-gray-100">
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-sm font-medium text-gray-700">{scanData.confidenceLabel}</span>
+            <span className="text-sm font-bold text-success">{scanData.confidence}%</span>
+          </div>
+          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div className="h-full bg-success rounded-full" style={{ width: `${scanData.confidence}%` }} />
+          </div>
+          <p className="text-xs text-gray-400 mt-2">
+            {scanData.detail || 'High confidence — Product matches authentic samples in the NAFDAC registry.'}
+          </p>
+        </div>
 
-            <div className="bg-gray-50 p-3 rounded-xl">
-              <p className="text-xs text-gray-400 mb-1">Category</p>
-              <p className="font-medium text-sm">{scanData.category}</p>
+        {/* 3. Legend Box - Red, Yellow, Green indicators */}
+        <div className="p-4 border-b border-gray-100">
+          <h3 className="text-sm font-medium text-gray-700 mb-3">Verification Legend</h3>
+          <div className="flex items-center justify-around">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded-full bg-danger"></div>
+              <span className="text-xs text-gray-600">Fake</span>
             </div>
-
-            <div className="bg-gray-50 p-3 rounded-xl">
-              <p className="text-xs text-gray-400 mb-1">Expiry Status</p>
-              <p className="font-medium text-sm text-success">Valid</p>
-              <p className="text-xs text-gray-400">{scanData.expiryDate}</p>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded-full bg-yellow-500"></div>
+              <span className="text-xs text-gray-600">Suspicious</span>
             </div>
-
-            <div className="bg-gray-50 p-3 rounded-xl">
-              <p className="text-xs text-gray-400 mb-1">Manufacturer</p>
-              <p className="font-medium text-sm">{scanData.manufacturer}</p>
-            </div>
-
-            <div className="bg-gray-50 p-3 rounded-xl">
-              <p className="text-xs text-gray-400 mb-1">Batch Number</p>
-              <p className="font-mono font-medium text-sm">{scanData.batchNumber}</p>
-            </div>
-
-            <div className="bg-gray-50 p-3 rounded-xl">
-              <p className="text-xs text-gray-400 mb-1">Location</p>
-              <p className="font-medium text-sm">{scanData.location}</p>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded-full bg-green-500"></div>
+              <span className="text-xs text-gray-600">Authentic</span>
             </div>
           </div>
+        </div>
 
-          {/* AI Confidence Score */}
-          <div className={`p-3 rounded-xl ${scanData.isSuspicious ? 'bg-yellow-50' : 'bg-primary/5'}`}>
-            <div className="flex justify-between items-center mb-2">
-              <span className={`text-sm font-medium ${scanData.isSuspicious ? 'text-yellow-700' : 'text-primary'}`}>AI Confidence Score</span>
-              <span className={`text-sm font-bold ${scanData.isSuspicious ? 'text-yellow-700' : 'text-primary'}`}>{scanData.similarity}%</span>
-            </div>
-            <div className={`h-2 rounded-full overflow-hidden ${scanData.isSuspicious ? 'bg-yellow-200' : 'bg-primary/10'}`}>
-              <div
-                className={`h-full rounded-full ${scanData.isSuspicious ? 'bg-yellow-500' : 'bg-primary'}`}
-                style={{ width: `${scanData.similarity}%` }}
-              />
-            </div>
-          </div>
-
-          {/* AI Summary */}
-          {scanData.summary && (
-            <div className="bg-gray-50 p-3 rounded-xl">
-              <p className="text-xs text-gray-500 mb-1">AI Analysis Summary</p>
-              <p className="text-sm text-gray-700">{scanData.summary}</p>
-            </div>
-          )}
-
-          {/* Warnings */}
-          {scanData.warnings?.length > 0 && (
-            <div className="bg-yellow-50 p-3 rounded-xl">
-              <p className="text-xs font-medium text-yellow-700 mb-2">Warnings</p>
+        {/* 4. Warning Signs Detected - Only if any warnings exist */}
+        {scanData.warnings?.length > 0 && (
+          <div className="p-4 border-b border-gray-100">
+            <h3 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+              <Icon name="AlertOctagon" size={16} className="text-yellow-500" library="fi" />
+              Warning Signs Detected
+            </h3>
+            <div className="flex flex-wrap gap-2">
               {scanData.warnings.map((w, i) => (
-                <p key={i} className="text-xs text-yellow-600">• {w?.message || w?.type || String(w)}</p>
+                <span key={i} className="text-xs bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full">
+                  {w?.type || w?.message || String(w)}
+                </span>
               ))}
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Quality Seals */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {scanData.signalsUsed?.includes('reg') && (
-              <span className="text-xs bg-success/10 text-success px-3 py-1 rounded-full flex items-center gap-1">
-                <Icon name="Check" size={12} className="text-success" library="fi" />
-                NAFDAC Verified
-              </span>
+        {/* 5. Why this product is verified */}
+        <div className="p-4 border-b border-gray-100">
+          <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+            <Icon name="Shield" size={18} className="text-success" library="fi" />
+            Why this product is verified:
+          </h3>
+          <div className="bg-success/5 rounded-xl p-4">
+            {scanData.summary && (
+              <p className="text-sm text-gray-700 mb-3 font-medium">{scanData.summary}</p>
             )}
-            {scanData.signalsUsed?.includes('visual') && (
-              <span className="text-xs bg-success/10 text-success px-3 py-1 rounded-full flex items-center gap-1">
-                <Icon name="Check" size={12} className="text-success" library="fi" />
-                Visual Match
-              </span>
-            )}
-            {scanData.signalsUsed?.includes('ocr') && (
-              <span className="text-xs bg-success/10 text-success px-3 py-1 rounded-full flex items-center gap-1">
-                <Icon name="Check" size={12} className="text-success" library="fi" />
-                OCR Verified
-              </span>
-            )}
-            {!scanData.signalsUsed?.length && (
-              <span className="text-xs bg-success/10 text-success px-3 py-1 rounded-full flex items-center gap-1">
-                <Icon name="Check" size={12} className="text-success" library="fi" />
-                AI Verified
-              </span>
-            )}
+            <ul className="space-y-3 text-sm">
+              {scanData.signalsUsed?.includes('reg') && (
+                <li className="flex items-start gap-3">
+                  <div className="w-5 h-5 bg-success/10 rounded-full flex items-center justify-center mt-0.5 shrink-0">
+                    <Icon name="Check" size={12} className="text-success" library="fi" />
+                  </div>
+                  <span className="text-gray-700">NAFDAC registration number verified in official database</span>
+                </li>
+              )}
+              {scanData.signalsUsed?.includes('visual') && (
+                <li className="flex items-start gap-3">
+                  <div className="w-5 h-5 bg-success/10 rounded-full flex items-center justify-center mt-0.5 shrink-0">
+                    <Icon name="Check" size={12} className="text-success" library="fi" />
+                  </div>
+                  <span className="text-gray-700">Visual packaging matches authentic product reference</span>
+                </li>
+              )}
+              {scanData.signalsUsed?.includes('ocr') && (
+                <li className="flex items-start gap-3">
+                  <div className="w-5 h-5 bg-success/10 rounded-full flex items-center justify-center mt-0.5 shrink-0">
+                    <Icon name="Check" size={12} className="text-success" library="fi" />
+                  </div>
+                  <span className="text-gray-700">Text labels (batch number, expiry date) are correctly formatted</span>
+                </li>
+              )}
+              {!scanData.signalsUsed?.length && (
+                <li className="flex items-start gap-3">
+                  <div className="w-5 h-5 bg-success/10 rounded-full flex items-center justify-center mt-0.5 shrink-0">
+                    <Icon name="Check" size={12} className="text-success" library="fi" />
+                  </div>
+                  <span className="text-gray-700">AI analysis confirms product authenticity</span>
+                </li>
+              )}
+            </ul>
           </div>
         </div>
 
-        {/* Report Issue */}
-        <button 
-          onClick={onReportIssue}
-          className="w-full text-center text-sm text-gray-400 py-4 border-t border-gray-100 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
-        >
-          <Icon name="Flag" size={16} className="text-gray-400" library="fi" />
-          Something looks wrong? Report Issue
-        </button>
+        {/* 6. Location/GPS - Converted to precise location name */}
+        <div className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Icon name="MapPin" size={18} className="text-gray-400" library="fi" />
+              <span className="text-sm text-gray-600">Location captured</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Icon name="Check" size={14} className="text-success" library="fi" />
+              <span className="text-xs text-gray-500">GPS verified</span>
+            </div>
+          </div>
+          <div className="bg-gray-50 p-3 rounded-lg flex items-center gap-2">
+            <Icon name="Navigation" size={16} className="text-primary" library="fi" />
+            <span className="text-sm font-medium">{locationName || scanData.location}</span>
+          </div>
+          {scanData.latitude && scanData.longitude && (
+            <div className="mt-2 text-xs text-gray-400 flex items-center gap-1">
+              <Icon name="Clock" size={12} library="fi" />
+              <span>Exact location recorded at {scanData.time}</span>
+            </div>
+          )}
+        </div>
       </Card>
 
+      {/* Actions */}
       <div className="space-y-3">
         <Button
           variant="primary"
@@ -296,6 +306,15 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
           icon="Camera"
         >
           Scan Another Product
+        </Button>
+
+        <Button
+          variant="outline"
+          fullWidth
+          onClick={handleRescan}
+          icon="RotateCcw"
+        >
+          Rescan Product
         </Button>
 
         <Button
@@ -317,8 +336,19 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
         </Button>
       </div>
 
-      {/* Trust Badge */}
+      {/* Report Issue Link */}
       <div className="mt-6 text-center">
+        <button 
+          onClick={onReportIssue}
+          className="text-sm text-gray-400 hover:text-primary transition-colors flex items-center justify-center gap-2 mx-auto"
+        >
+          <Icon name="Flag" size={14} library="fi" />
+          Something looks wrong? Report Issue
+        </button>
+      </div>
+
+      {/* Trust Badge */}
+      <div className="mt-4 text-center">
         <div className="flex items-center justify-center gap-2 text-xs text-gray-400">
           <Icon name="Shield" size={14} className="text-primary" library="fi" />
           <span>Verified by SabiLens AI • Report ID: {scanData.id?.slice(-8).toUpperCase() || Math.random().toString(36).substr(2, 8).toUpperCase()}</span>

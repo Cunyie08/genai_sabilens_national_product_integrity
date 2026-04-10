@@ -4,14 +4,13 @@ import Icon from '../../common/Icon';
 import Card from '../../common/Card';
 import Button from '../../common/Button';
 import Modal from '../../common/Modal';
-// Remove saveScan import - NOT NEEDED
-// import { saveScan } from '../../../services/scanHistory';
 
 const ScanResultFake = ({ onBack, onReportToAuthority }) => {
   const navigate = useNavigate();
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportSubmitted, setReportSubmitted] = useState(false);
   const [scanData, setScanData] = useState(null);
+  const [locationName, setLocationName] = useState('');
 
   useEffect(() => {
     const loadScan = async () => {
@@ -35,13 +34,16 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
         } catch {}
       }
 
-      const confidence = aiResult?.confidence_pct ?? (
-        aiResult?.confidence_score != null
-          ? Math.round((aiResult.confidence_score || 0) * 100)
-          : 18
+      const displayConfidence = aiResult?.display_confidence ?? (
+        aiResult?.confidence_pct ?? (
+          aiResult?.confidence_score != null
+            ? Math.round((aiResult.confidence_score || 0) * 100)
+            : 95
+        )
       );
+      
+      const confidenceLabel = aiResult?.confidence_label || 'Confidence Label';
 
-      // Extract issues from AI warnings or evidence
       const warnings = aiResult?.warnings || [];
       const issues = warnings.length > 0
         ? warnings.map((w) => w?.message || w?.type || String(w))
@@ -58,8 +60,9 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
         nafdacNumber: 'Not Found',
         batchNumber: 'Invalid',
         status: 'fake',
-        similarity: confidence,
-        confidence,
+        similarity: displayConfidence,
+        confidence: displayConfidence,
+        confidenceLabel: confidenceLabel,
         severity: aiResult?.severity || 'CRITICAL',
         action: aiResult?.action || 'DO NOT BUY',
         instruction: aiResult?.simple_instruction || 'Do not buy this product. It appears to be counterfeit.',
@@ -77,9 +80,31 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
       };
 
       setScanData(data);
-      
-      // REMOVED: saveScan(data) - Backend already auto-saves!
-      console.log('Fake scan loaded (backend already saved this)');
+
+      // Convert coordinates to location name
+      if (scanLat && scanLng) {
+        try {
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${scanLat}&lon=${scanLng}&zoom=18&addressdetails=1`
+          );
+          const result = await response.json();
+          if (result.display_name) {
+            // Extract city, state, country
+            const address = result.address;
+            const city = address.city || address.town || address.village || '';
+            const state = address.state || '';
+            const country = address.country || '';
+            setLocationName([city, state, country].filter(Boolean).join(', '));
+          } else {
+            setLocationName(scanLocation || `${scanLat.toFixed(4)}° N, ${scanLng.toFixed(4)}° E`);
+          }
+        } catch (error) {
+          console.error('Geocoding error:', error);
+          setLocationName(scanLocation || `${scanLat.toFixed(4)}° N, ${scanLng.toFixed(4)}° E`);
+        }
+      } else {
+        setLocationName(scanLocation || 'Location unavailable');
+      }
     };
 
     loadScan();
@@ -96,6 +121,16 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
     }, 2000);
   };
 
+  const handleScanAnother = () => {
+    sessionStorage.removeItem('currentScan');
+    navigate('/scan');
+  };
+
+  const handleRescan = () => {
+    sessionStorage.removeItem('currentScan');
+    navigate('/scan');
+  };
+
   if (!scanData) {
     return (
       <div className="px-6 py-8 flex justify-center">
@@ -105,13 +140,13 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
   }
 
   return (
-    <div className="px-6 py-8">
-      {/* Back Button */}
+    <div className="px-6 py-4">
+      {/* Back Button - Circle */}
       <button
         onClick={onBack}
-        className="mb-6"
+        className="mb-6 w-10 h-10 rounded-full bg-white shadow-sm border border-gray-100 flex items-center justify-center hover:bg-gray-50 transition-all"
       >
-        <Icon name="ArrowLeft" size={24} className="text-gray-500" library="fi" />
+        <Icon name="ArrowLeft" size={20} className="text-gray-600" library="fi" />
       </button>
 
       {/* Result Card */}
@@ -167,7 +202,72 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
           </div>
         </div>
 
-        {/* Reason */}
+        {/* 1. Risk Assessment */}
+        <div className="p-4 border-b border-gray-100">
+          <h3 className="text-sm font-medium text-gray-700 mb-3">Risk Assessment</h3>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-danger/5 p-3 rounded-lg text-center">
+              <p className="text-xl font-bold text-danger">High</p>
+              <p className="text-xs text-gray-500">Health Risk</p>
+            </div>
+            <div className="bg-danger/5 p-3 rounded-lg text-center">
+              <p className="text-xl font-bold text-danger">Critical</p>
+              <p className="text-xs text-gray-500">Counterfeit Level</p>
+            </div>
+          </div>
+        </div>
+
+        {/* 2. Confidence Label (renamed from AI Confidence Score) */}
+        <div className="p-4 border-b border-gray-100">
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-sm font-medium text-gray-700">{scanData.confidenceLabel}</span>
+            <span className="text-sm font-bold text-danger">{scanData.confidence}%</span>
+          </div>
+          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div className="h-full bg-danger rounded-full" style={{ width: `100%` }} />
+          </div>
+          <p className="text-xs text-gray-400 mt-2">
+            {scanData.instruction || scanData.detail || 'High confidence — This product matches counterfeit patterns'}
+          </p>
+        </div>
+
+        {/* 3. Legend Box - Red, Yellow, Green indicators */}
+        <div className="p-4 border-b border-gray-100">
+          <h3 className="text-sm font-medium text-gray-700 mb-3">Verification Legend</h3>
+          <div className="flex items-center justify-around">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded-full bg-danger"></div>
+              <span className="text-xs text-gray-600">Fake</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded-full bg-yellow-500"></div>
+              <span className="text-xs text-gray-600">Suspicious</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded-full bg-green-500"></div>
+              <span className="text-xs text-gray-600">Authentic</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 4. Warning Signs Detected */}
+        {scanData.warnings?.length > 0 && (
+          <div className="p-4 border-b border-gray-100">
+            <h3 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+              <Icon name="AlertOctagon" size={16} className="text-danger" library="fi" />
+              Warning Signs Detected
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              {scanData.warnings.map((w, i) => (
+                <span key={i} className="text-xs bg-danger/10 text-danger px-3 py-1 rounded-full">
+                  {w?.type || w?.message || String(w)}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 5. Why this product is flagged */}
         <div className="p-4 border-b border-gray-100">
           <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
             <Icon name="XCircle" size={18} className="text-danger" library="fi" />
@@ -190,75 +290,29 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
           </div>
         </div>
 
-        {/* Similarity Score */}
-        <div className="p-4 border-b border-gray-100">
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-sm font-medium text-gray-700">AI Confidence Score</span>
-            <span className="text-sm font-bold text-danger">{scanData.similarity}%</span>
-          </div>
-          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-            <div className="h-full bg-danger rounded-full" style={{ width: `${scanData.similarity}%` }} />
-          </div>
-          <p className="text-xs text-gray-400 mt-2">
-            {scanData.detail || 'Low confidence — product does not match authentic samples in the NAFDAC registry.'}
-          </p>
-        </div>
-
-        {/* Location Captured */}
-        <div className="p-4 border-b border-gray-100">
-          <div className="flex items-center justify-between">
+        {/* 6. Location/GPS - Converted to precise location name */}
+        <div className="p-4">
+          <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               <Icon name="MapPin" size={18} className="text-gray-400" library="fi" />
               <span className="text-sm text-gray-600">Location captured</span>
             </div>
             <div className="flex items-center gap-2">
               <Icon name="Check" size={14} className="text-success" library="fi" />
-              <span className="text-xs text-gray-500">GPS locked</span>
+              <span className="text-xs text-gray-500">GPS verified</span>
             </div>
           </div>
-          <div className="mt-2 bg-gray-50 p-3 rounded-lg flex items-center gap-2">
+          <div className="bg-gray-50 p-3 rounded-lg flex items-center gap-2">
             <Icon name="Navigation" size={16} className="text-primary" library="fi" />
-            <span className="text-sm font-medium">{scanData.location}</span>
+            <span className="text-sm font-medium">{locationName || scanData.location}</span>
           </div>
-          {scanData.latitude && scanData.longitude ? (
+          {scanData.latitude && scanData.longitude && (
             <div className="mt-2 text-xs text-gray-400 flex items-center gap-1">
               <Icon name="Clock" size={12} library="fi" />
-              <span>Coordinates: {scanData.latitude.toFixed(5)}° N, {scanData.longitude.toFixed(5)}° E • Exact location recorded</span>
+              <span>Exact location recorded at {scanData.time}</span>
             </div>
-          ) : null}
+          )}
         </div>
-
-        {/* Risk Factors */}
-        <div className="p-4 border-b border-gray-100">
-          <h3 className="text-sm font-medium text-gray-700 mb-3">Risk Assessment</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-danger/5 p-3 rounded-lg text-center">
-              <p className="text-xl font-bold text-danger">High</p>
-              <p className="text-xs text-gray-500">Health Risk</p>
-            </div>
-            <div className="bg-danger/5 p-3 rounded-lg text-center">
-              <p className="text-xl font-bold text-danger">Critical</p>
-              <p className="text-xs text-gray-500">Counterfeit Level</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Warning Signs — derived from actual AI signals */}
-        {scanData.warnings?.length > 0 && (
-          <div className="p-4 border-b border-gray-100">
-            <h3 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
-              <Icon name="AlertOctagon" size={16} className="text-danger" library="fi" />
-              Warning Signs Detected
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {scanData.warnings.map((w, i) => (
-                <span key={i} className="text-xs bg-danger/10 text-danger px-3 py-1 rounded-full">
-                  {w?.type || w?.message || String(w)}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
       </Card>
 
       {/* Actions */}
@@ -269,7 +323,7 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
           onClick={() => setShowReportModal(true)}
           icon="Flag"
         >
-          Report to NAFDAC
+          Report
         </Button>
         
         <Button 
@@ -285,6 +339,24 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
           }}
         >
           Upload Receipt as Evidence
+        </Button>
+
+        <Button
+          variant="outline"
+          fullWidth
+          onClick={handleRescan}
+          icon="RotateCcw"
+        >
+          Rescan Product
+        </Button>
+
+        <Button
+          variant="outline"
+          fullWidth
+          onClick={handleScanAnother}
+          icon="Camera"
+        >
+          Scan Another Product
         </Button>
 
         <Button

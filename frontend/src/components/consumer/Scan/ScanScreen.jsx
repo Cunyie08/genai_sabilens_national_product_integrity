@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, Image, ArrowRight, Check, AlertCircle, CameraOff, Flashlight } from 'lucide-react';
+import { X, Image, ArrowRight, Check, AlertCircle, CameraOff, Flashlight, RotateCcw } from 'lucide-react';
 import { scanApi } from '../../../services/api';
-import { saveScan } from '../../../services/scanHistory';
+// import { saveScan } from '../../../services/scanHistory';
 import useMediaPipeDetection from '../../../hooks/useMediaPipeDetection';
+import { saveScan, markRefreshNeeded } from '../../../services/scanHistory';
 
 const TOTAL_PHASES = 2;
 
@@ -15,11 +16,11 @@ const scanPhases = [
     description: 'Position the front label clearly in frame',
     target: 'Product name, brand logo, NAFDAC number',
     icon: 'Square',
-    nextInstruction: 'Great! Now flip to the back panel',
-    captureMessage: 'Front panel captured!',
-    guideMessage: '📸 Scan the front panel containing the brand logo and product name',
+    nextInstruction: 'Great! Now flip to the back',
+    captureMessage: 'Front package captured!',
+    guideMessage: 'Scan the front part containing the brand logo and product name',
     alignMessage: 'Align front packaging within the frame to scan',
-    continueButtonText: 'Continue to Back Panel',
+    continueButtonText: 'Continue to Scan Back package',
   },
   {
     id: 1,
@@ -29,8 +30,8 @@ const scanPhases = [
     target: 'NAFDAC number, batch code, expiry date, manufacturer',
     icon: 'RotateCcw',
     nextInstruction: 'Both sides captured! Sending to AI…',
-    captureMessage: 'Back panel captured!',
-    guideMessage: '🔍 Scan the back/side panel containing the NAFDAC number and batch code',
+    captureMessage: 'Back package captured!',
+    guideMessage: 'Scan the back/side containing the NAFDAC number and batch code',
     alignMessage: 'Align back/side packaging within the frame to scan',
     continueButtonText: 'Submit to AI',
   },
@@ -69,6 +70,17 @@ const ScanScreen = () => {
   const [waitingForContinue, setWaitingForContinue] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
 
+  // Product preview states
+  const [showProductPreview, setShowProductPreview] = useState(false);
+  const [capturedPreview, setCapturedPreview] = useState(null);
+  const [productCheckLoading, setProductCheckLoading] = useState(false);
+  const [productCheckError, setProductCheckError] = useState(null);
+  const [noProductDetected, setNoProductDetected] = useState(false);
+  const [currentCheckPhase, setCurrentCheckPhase] = useState(0);
+
+  // NEW: Success guide overlay state
+  const [showSuccessGuide, setShowSuccessGuide] = useState(false);
+
   // Scanning line state
   const [linePosition, setLinePosition] = useState(0);
   const [scanDirection, setScanDirection] = useState('down');
@@ -85,6 +97,7 @@ const ScanScreen = () => {
   const geoRef = useRef({ latitude: 0, longitude: 0, address: '' });
   const guidanceTimerRef = useRef(null);
   const alignTimerRef = useRef(null);
+  const pendingCaptureRef = useRef(null);
 
   // MediaPipe Detection Hook
   const {
@@ -96,7 +109,7 @@ const ScanScreen = () => {
     resetTrigger
   } = useMediaPipeDetection(
     videoRef, 
-    cameraActive && !scanning && !submitting && !showNextPrompt && !waitingForContinue,
+    cameraActive && !scanning && !submitting && !showNextPrompt && !waitingForContinue && !showProductPreview && !showSuccessGuide,
     null
   );
 
@@ -117,17 +130,22 @@ const ScanScreen = () => {
     return 'Unable to analyze the product. Please try again with a clearer image.';
   };
 
-  // ── Capture ────────────────────────────────────────────────────────────────
-  const captureImage = useCallback((phaseIndex) => {
-    if (!videoRef.current || !canvasRef.current) return null;
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-    capturedImagesRef.current = { ...capturedImagesRef.current, [phaseIndex]: dataUrl };
-    return dataUrl;
+  // ── Guidance Message Management ───────────────────────────────────────────
+  const startGuidance = useCallback((phaseIndex) => {
+    if (guidanceTimerRef.current) clearTimeout(guidanceTimerRef.current);
+    if (alignTimerRef.current) clearTimeout(alignTimerRef.current);
+    
+    setShowGuidancePhase(true);
+    
+    alignTimerRef.current = setTimeout(() => {
+      setShowGuidancePhase(false);
+    }, 5000);
+  }, []);
+
+  const clearGuidance = useCallback(() => {
+    if (guidanceTimerRef.current) clearTimeout(guidanceTimerRef.current);
+    if (alignTimerRef.current) clearTimeout(alignTimerRef.current);
+    setShowGuidancePhase(true);
   }, []);
 
   // ── Submit to AI ───────────────────────────────────────────────────────────
@@ -153,6 +171,10 @@ const ScanScreen = () => {
       const data = response.data || {};
       const verdict = data.verdict || data.final_verdict || 'FAKE';
       
+      // Use backend's display_confidence and confidence_label
+      const displayConfidence = data.display_confidence || (data.confidence_score ? Math.round(data.confidence_score * 100) : null);
+      const confidenceLabel = data.confidence_label || 'AI Confidence Score';
+      
       const scanRecord = {
         id: data.scan_id || `scan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         product: data.product_name || 'Verified Product',
@@ -162,13 +184,14 @@ const ScanScreen = () => {
         location: geo.address || '',
         latitude: geo.latitude,
         longitude: geo.longitude,
-        similarity: data.confidence_score ? Math.round(data.confidence_score * 100) : null,
+        similarity: displayConfidence,
         timestamp: Date.now(),
         date: new Date().toISOString(),
         details: data
       };
       
       await saveScan(scanRecord);
+      markRefreshNeeded();
       
       sessionStorage.setItem('currentScan', JSON.stringify({
         productImage: primaryImage,
@@ -182,7 +205,10 @@ const ScanScreen = () => {
         latitude: geo.latitude,
         longitude: geo.longitude,
         category: detectedCategory,
-        scan_id: scanRecord.id
+        scan_id: scanRecord.id,
+        displayConfidence: displayConfidence,
+        confidenceLabel: confidenceLabel,
+        simpleInstruction: data.simple_instruction || ''
       }));
       
       if (verdict === 'AUTHENTIC') {
@@ -201,46 +227,127 @@ const ScanScreen = () => {
     }
   }, [navigate]);
 
-  // ── Guidance Message Management ───────────────────────────────────────────
-  const startGuidance = useCallback((phaseIndex) => {
-    if (guidanceTimerRef.current) clearTimeout(guidanceTimerRef.current);
-    if (alignTimerRef.current) clearTimeout(alignTimerRef.current);
-    
-    setShowGuidancePhase(true);
-    
-    alignTimerRef.current = setTimeout(() => {
-      setShowGuidancePhase(false);
-    }, 5000);
+  // ── Backend Product Detection ─────────────────────────────────────────────
+  const checkProductExists = useCallback(async (imageDataUrl, phase) => {
+    setProductCheckLoading(true);
+    setProductCheckError(null);
+    try {
+      const base64Data = imageDataUrl.split(',')[1] || imageDataUrl;
+      
+      const response = await scanApi.detectProduct({ 
+        image_data: base64Data,
+        phase: phase
+      });
+      
+      return { hasProduct: response.has_product, confidence: response.confidence };
+    } catch (err) {
+      console.error('Product detection error:', err);
+      setProductCheckError(err?.response?.data?.message || 'Detection failed. Please retake.');
+      return { hasProduct: false, confidence: 0 };
+    } finally {
+      setProductCheckLoading(false);
+    }
   }, []);
 
-  const clearGuidance = useCallback(() => {
-    if (guidanceTimerRef.current) clearTimeout(guidanceTimerRef.current);
-    if (alignTimerRef.current) clearTimeout(alignTimerRef.current);
-    setShowGuidancePhase(true);
+  // ── Capture ────────────────────────────────────────────────────────────────
+  const captureImage = useCallback((phaseIndex) => {
+    if (!videoRef.current || !canvasRef.current) return null;
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    capturedImagesRef.current = { ...capturedImagesRef.current, [phaseIndex]: dataUrl };
+    return dataUrl;
   }, []);
 
-  // ── Complete phase capture ────────────────────────────────────────────────
-  const completePhaseCapture = useCallback((phaseIndex) => {
+  // ── Re-attach stream to video element ────────────────────────────────────
+  const reAttachStream = useCallback(() => {
+    if (streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, []);
+
+  // ── Handle capture completion with product check ──────────────────────────
+  const handleCaptureComplete = useCallback(async (phaseIndex, imageDataUrl) => {
+    pendingCaptureRef.current = imageDataUrl;
+    setCurrentCheckPhase(phaseIndex);
+    const { hasProduct, confidence } = await checkProductExists(imageDataUrl, phaseIndex === 0 ? 'front' : 'back');
+    
+    if (hasProduct) {
+      setCapturedPreview(imageDataUrl);
+      setShowProductPreview(true);
+      setNoProductDetected(false);
+    } else {
+      setNoProductDetected(true);
+      setShowProductPreview(true);
+      setCapturedPreview(imageDataUrl);
+    }
+  }, [checkProductExists]);
+
+  // ── Keep image and proceed ────────────────────────────────────────────────
+  const handleKeepImage = useCallback(() => {
+    const phaseIndex = currentCheckPhase;
     setCompletedPhases((prev) => [...prev, phaseIndex]);
     setDetectedFeatures((prev) => [...prev, ...(featuresByPhase[phaseIndex] || [])]);
     setShowSuccess(true);
     setScanning(false);
-    setWaitingForContinue(true);
-    resetTrigger();
+    setShowProductPreview(false);
+    setCapturedPreview(null);
+    setNoProductDetected(false);
+    pendingCaptureRef.current = null;
+
+    // Re-attach stream so the video element (which stayed mounted) resumes feed
+    reAttachStream();
     
     if (scanLineRef.current) { clearInterval(scanLineRef.current); scanLineRef.current = null; }
     if (captureTimerRef.current) { clearTimeout(captureTimerRef.current); captureTimerRef.current = null; }
     
     setTimeout(() => {
       setShowSuccess(false);
-      if (phaseIndex === TOTAL_PHASES - 1) {
-        // Back panel captured - auto-submit to AI
+      
+      if (phaseIndex === 0) {
+        // Show success guide overlay before moving to back panel
+        setShowSuccessGuide(true);
+      } else if (phaseIndex === 1) {
+        // Submit to AI
         submitToAI(capturedImagesRef.current);
-      } else {
-        setShowNextPrompt(true);
       }
     }, 800);
-  }, [resetTrigger, submitToAI]);
+  }, [currentCheckPhase, submitToAI, reAttachStream]);
+
+  // ── Proceed to back panel after success guide ─────────────────────────────
+  const proceedToBackPanel = useCallback(() => {
+    setShowSuccessGuide(false);
+    setCurrentPhase(1);
+    setShowNextPrompt(false);
+    setWaitingForContinue(false);
+    // Reset guidance for back panel
+    setTimeout(() => {
+      startGuidance(1);
+      resetTrigger();
+    }, 100);
+  }, [resetTrigger, startGuidance]);
+
+  // ── Retake image - restart camera for current phase ───────────────────────
+  const handleRetakeImage = useCallback(() => {
+    setShowProductPreview(false);
+    setCapturedPreview(null);
+    setNoProductDetected(false);
+    setProductCheckError(null);
+    pendingCaptureRef.current = null;
+    setScanning(false);
+
+    // Re-attach stream to the video element (it stays mounted) so feed resumes
+    reAttachStream();
+
+    setTimeout(() => {
+      startGuidance(currentPhase);
+      resetTrigger();
+    }, 150);
+  }, [currentPhase, resetTrigger, startGuidance, reAttachStream]);
 
   // ── Start scanning animation ───────────────────────────────────────────────
   const stopScan = useCallback(() => {
@@ -265,7 +372,6 @@ const ScanScreen = () => {
     setScanProgress(0);
     clearGuidance();
     
-    // Start scanning line animation - moves down then up
     if (scanLineRef.current) clearInterval(scanLineRef.current);
     let pos = 0;
     let dir = 'down';
@@ -283,16 +389,15 @@ const ScanScreen = () => {
         pos = Math.max(pos - 2, 0);
         setScanProgress(pos);
         if (pos <= 0) {
-          // Scan complete - capture image
           clearInterval(scanLineRef.current);
           scanLineRef.current = null;
-          captureImage(currentPhase);
-          completePhaseCapture(currentPhase);
+          const imageData = captureImage(currentPhase);
+          handleCaptureComplete(currentPhase, imageData);
         }
       }
       setLinePosition(pos);
     }, 25);
-  }, [cameraActive, detectionState.hasObject, currentPhase, captureImage, completePhaseCapture, clearGuidance]);
+  }, [cameraActive, detectionState.hasObject, currentPhase, captureImage, handleCaptureComplete, clearGuidance]);
 
   // ── Camera ─────────────────────────────────────────────────────────────────
   const startCamera = useCallback(async () => {
@@ -346,6 +451,7 @@ const ScanScreen = () => {
     }
   }, [torchOn]);
 
+  // Initialize camera
   useEffect(() => {
     startCamera();
     if (navigator.geolocation) {
@@ -368,13 +474,13 @@ const ScanScreen = () => {
 
   // Start guidance when camera is active and not scanning
   useEffect(() => {
-    if (cameraActive && !scanning && !submitting && !showNextPrompt && !waitingForContinue) {
+    if (cameraActive && !scanning && !submitting && !showNextPrompt && !waitingForContinue && !showProductPreview && !showSuccessGuide) {
       startGuidance(currentPhase);
     } else {
       clearGuidance();
     }
     return () => clearGuidance();
-  }, [cameraActive, scanning, submitting, showNextPrompt, waitingForContinue, currentPhase, startGuidance]);
+  }, [cameraActive, scanning, submitting, showNextPrompt, waitingForContinue, showProductPreview, showSuccessGuide, currentPhase, startGuidance, clearGuidance]);
 
   // ── Scan Controls ──────────────────────────────────────────────────────────
   const resetScan = useCallback(() => {
@@ -389,6 +495,11 @@ const ScanScreen = () => {
     setWaitingForContinue(false);
     setSubmitting(false);
     setSubmitError(null);
+    setShowProductPreview(false);
+    setShowSuccessGuide(false);
+    setCapturedPreview(null);
+    setNoProductDetected(false);
+    setProductCheckError(null);
     setLinePosition(0);
     setScanDirection('down');
     setScanProgress(0);
@@ -418,11 +529,6 @@ const ScanScreen = () => {
     submitToAI(slots);
   }, [uploadSlots, submitToAI]);
 
-  const openSlotPicker = useCallback((slotIndex) => {
-    uploadSlotRef.current = slotIndex;
-    fileInputRef.current?.click();
-  }, []);
-
   const continueToNextPhase = useCallback(() => {
     setShowNextPrompt(false);
     setWaitingForContinue(false);
@@ -432,12 +538,15 @@ const ScanScreen = () => {
     resetTrigger();
   }, [currentPhase, startGuidance, resetTrigger]);
 
+  const openSlotPicker = useCallback((slotIndex) => {
+    uploadSlotRef.current = slotIndex;
+    fileInputRef.current?.click();
+  }, []);
+
   const currentPhaseData = scanPhases[currentPhase] ?? scanPhases[0];
 
-  // Scan button is green when product is detected
-  const canStartScan = cameraActive && detectionState.hasObject && !scanning && !submitting && !showNextPrompt && !waitingForContinue && !isModelLoading;
+  const canStartScan = cameraActive && detectionState.hasObject && !scanning && !submitting && !showNextPrompt && !waitingForContinue && !isModelLoading && !showProductPreview && !showSuccessGuide;
 
-  // Get current guidance message
   const getGuidanceMessage = () => {
     if (showGuidancePhase) {
       return currentPhaseData.guideMessage;
@@ -445,18 +554,21 @@ const ScanScreen = () => {
     return currentPhaseData.alignMessage;
   };
 
-  // Get hint message
   const getHintMessage = () => {
     if (submitError) return submitError;
     if (submitting) return 'SabiLens AI is analysing…';
+    if (showProductPreview && productCheckLoading) return 'Checking for product...';
+    if (showProductPreview && noProductDetected) return 'No product detected. Please retake.';
+    if (showProductPreview && !noProductDetected) return 'Product detected. Keep or retake?';
+    if (showSuccessGuide) return 'Front package saved! Flip your product to scan the back.';
     if (showNextPrompt && waitingForContinue) {
       return `${currentPhaseData.captureMessage} ${currentPhaseData.nextInstruction}`;
     }
     if (scanning) {
       if (scanDirection === 'down') {
-        return `Scanning ${currentPhaseData.name} panel — moving down`;
+        return `Scanning ${currentPhaseData.name} package — moving down`;
       }
-      return `Scanning ${currentPhaseData.name} panel — moving up`;
+      return `Scanning ${currentPhaseData.name} package — moving up`;
     }
     if (!scanning && !showNextPrompt && !waitingForContinue) {
       if (!detectionState.hasObject) {
@@ -492,14 +604,14 @@ const ScanScreen = () => {
           </div>
 
           <p className="text-white/50 text-xs mb-5 leading-relaxed">
-            Select the <span className="text-white font-semibold">front panel</span> and{' '}
-            <span className="text-white font-semibold">back/side panel</span> of the product.
+            Select the <span className="text-white font-semibold">front</span> and{' '}
+            <span className="text-white font-semibold">back/side</span> of the product.
             <span className="block text-green-500 text-[10px] mt-1">NAFDAC number is usually on the back or side label.</span>
           </p>
 
           <div className="grid grid-cols-2 gap-3 mb-5">
             {[
-              { slot: 0, label: 'Front Panel', hint: 'Brand · Logo · Name' },
+              { slot: 0, label: 'Front', hint: 'Brand · Logo · Name' },
               { slot: 1, label: 'Back / Side', hint: 'NAFDAC · Batch · Expiry' },
             ].map(({ slot, label, hint }) => (
               <div key={slot} className="flex flex-col gap-1.5">
@@ -545,7 +657,7 @@ const ScanScreen = () => {
               ${uploadSlots[0] && uploadSlots[1] ? 'bg-green-500 text-white' : 'bg-white/10 text-white/30 cursor-not-allowed'}`}
           >
             <Flashlight size={16} />
-            {uploadSlots[0] && uploadSlots[1] ? 'Analyse Both Images' : `Select ${!uploadSlots[0] ? 'Front' : 'Back'} Panel`}
+            {uploadSlots[0] && uploadSlots[1] ? 'Analyse Both Images' : `Select ${!uploadSlots[0] ? 'Front' : 'Back'} Package`}
           </button>
         </div>
       </div>
@@ -553,12 +665,105 @@ const ScanScreen = () => {
   }
 
   // ── MAIN UI ────────────────────────────────────────────────────────────────
+  // NOTE: showProductPreview and showSuccessGuide are rendered as absolute overlays
+  // on top of the main UI. This keeps <video ref={videoRef}> always mounted.
   return (
     <div className="fixed inset-0 flex flex-col bg-black">
       <canvas ref={canvasRef} className="hidden" />
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
 
-      {/* ── TOP BAR ── */}
+      {/* ── PRODUCT PREVIEW OVERLAY (absolute, keeps video mounted below) ── */}
+      {showProductPreview && (
+        <div className="absolute inset-0 z-50 flex flex-col bg-black items-center justify-center px-5">
+          <div className="relative w-full max-w-[320px] rounded-2xl overflow-hidden mb-6" style={{ aspectRatio: '3/4' }}>
+            {capturedPreview && (
+              <img src={capturedPreview} alt="Captured product" className="w-full h-full object-cover" />
+            )}
+            {productCheckLoading && (
+              <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
+                <div className="text-center">
+                  <div className="w-10 h-10 border-2 border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                  <p className="text-white text-sm">Checking for product...</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {!productCheckLoading && (
+            <div className="text-center w-full max-w-[320px]">
+              {noProductDetected ? (
+                <>
+                  <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
+                    <AlertCircle size={32} className="text-red-400" />
+                  </div>
+                  <h3 className="text-white text-lg font-bold mb-2">No Product Detected</h3>
+                  <p className="text-white/50 text-sm mb-6">
+                    {productCheckError || "We couldn't identify a product in this image. Please try again with better lighting and positioning."}
+                  </p>
+                  <button
+                    onClick={handleRetakeImage}
+                    className="w-full py-3 rounded-xl font-semibold bg-white/10 border border-white/20 text-white"
+                  >
+                    Retake
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-4">
+                    <Check size={32} className="text-green-400" />
+                  </div>
+                  <h3 className="text-white text-lg font-bold mb-2">Product Detected</h3>
+                  <p className="text-white/50 text-sm mb-6">
+                    Is this image clear? You can keep it or retake.
+                  </p>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleRetakeImage}
+                      className="flex-1 py-3 rounded-xl font-semibold bg-white/10 border border-white/20 text-white"
+                    >
+                      Retake
+                    </button>
+                    <button
+                      onClick={handleKeepImage}
+                      className="flex-1 py-3 rounded-xl font-semibold bg-green-500 text-white"
+                    >
+                      {currentCheckPhase === 0 ? 'Keep & Continue' : 'Submit Scan'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── SUCCESS GUIDE OVERLAY (after front panel keep) ── */}
+      {showSuccessGuide && (
+        <div className="absolute inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-md items-center justify-center px-5 animate-fadeIn">
+          <div className="text-center w-full max-w-[320px]">
+            <div className="w-20 h-20 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-6">
+              <Check size={48} className="text-green-400" />
+            </div>
+            <h3 className="text-white text-2xl font-bold mb-3">Front Package Saved!</h3>
+            <p className="text-white/60 text-base mb-8 leading-relaxed">
+              Great! Now flip your product and scan the back/side panel containing the NAFDAC number, batch code, and expiry date.
+            </p>
+            <div className="bg-white/5 rounded-2xl p-4 mb-8 border border-white/10">
+              <p className="text-white/80 text-sm">
+                <span className="text-green-400 font-semibold">Next step:</span> Scan the back panel
+              </p>
+            </div>
+            <button
+              onClick={proceedToBackPanel}
+              className="w-full py-4 rounded-xl font-semibold text-white bg-green-500 hover:bg-green-600 transition-colors text-base flex items-center justify-center gap-2"
+            >
+              Continue to Back Scan
+              <ArrowRight size={18} />
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex-none flex items-start justify-between px-4 pt-12 pb-2">
         <button
           onClick={() => { resetScan(); navigate('/home'); }}
@@ -570,12 +775,11 @@ const ScanScreen = () => {
         <div className="text-right">
           <p className="text-white/40 text-[8px] tracking-widest uppercase">SabiLens AI</p>
           <p className="text-white text-xs font-medium tracking-tight">
-            {submitting ? 'Analysing…' : scanning ? `${currentPhaseData.name} Panel` : waitingForContinue ? 'Capture Complete' : 'Multimodal'}
+            {submitting ? 'Analysing…' : scanning ? `${currentPhaseData.name} Package` : waitingForContinue ? 'Capture Complete' : 'Multimodal'}
           </p>
         </div>
       </div>
 
-      {/* ── MODEL LOADING INDICATOR ── */}
       {isModelLoading && (
         <div className="absolute top-20 right-4 z-20 bg-black/60 backdrop-blur rounded-full px-3 py-1">
           <span className="text-white text-[10px] flex items-center gap-1">
@@ -585,11 +789,9 @@ const ScanScreen = () => {
         </div>
       )}
 
-      {/* ── SCANNER BOX ── */}
       <div className="flex-1 flex flex-col items-center justify-start px-3 pt-1">
         <div className="relative w-full max-w-[360px] mx-auto">
           <div className="relative w-full rounded-2xl overflow-hidden" style={{ aspectRatio: '3/4', maxHeight: '55vh', background: '#0a0a0a' }}>
-            {/* Video feed */}
             <video
               ref={videoRef}
               autoPlay
@@ -599,7 +801,6 @@ const ScanScreen = () => {
               style={{ display: cameraActive ? 'block' : 'none' }}
             />
 
-            {/* Camera error / loading */}
             {!cameraActive && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
                 {cameraPermission === 'idle' || cameraPermission === 'requesting' ? (
@@ -624,13 +825,10 @@ const ScanScreen = () => {
               </div>
             )}
 
-            {/* Dark vignette */}
             <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(ellipse at 50% 50%, transparent 45%, rgba(0,0,0,0.45) 100%)' }} />
 
-            {/* ── PROFESSIONAL AI SCANNING EFFECT ── */}
             {scanning && (
               <div className="absolute inset-0 pointer-events-none z-20">
-                {/* Sparse grid overlay */}
                 <svg width="100%" height="100%" style={{ position: 'absolute', inset: 0, opacity: 0.12 }}>
                   <defs>
                     <pattern id="aiGrid" width="40" height="40" patternUnits="userSpaceOnUse">
@@ -640,7 +838,6 @@ const ScanScreen = () => {
                   <rect width="100%" height="100%" fill="url(#aiGrid)" />
                 </svg>
 
-                {/* Corner scan brackets pulsing */}
                 <div style={{
                   position: 'absolute', top: '12%', left: '8%',
                   width: 28, height: 28,
@@ -670,7 +867,6 @@ const ScanScreen = () => {
                   animation: 'scanPulse 1.5s ease-in-out infinite 0.6s',
                 }} />
 
-                {/* 5 fixed data-point nodes — evenly distributed */}
                 {[
                   { top: '22%', left: '20%' },
                   { top: '22%', left: '75%' },
@@ -697,7 +893,6 @@ const ScanScreen = () => {
               </div>
             )}
 
-            {/* Scanning laser line */}
             {scanning && !showNextPrompt && !submitting && (
               <>
                 <div
@@ -721,10 +916,8 @@ const ScanScreen = () => {
               </>
             )}
 
-            {/* Static border */}
             <div className="absolute inset-0 pointer-events-none rounded-2xl border border-white/20" />
 
-            {/* Corner brackets */}
             <div className="absolute inset-0 pointer-events-none" style={{ margin: '10px' }}>
               <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-white/60 rounded-tl-lg" />
               <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-white/60 rounded-tr-lg" />
@@ -732,7 +925,6 @@ const ScanScreen = () => {
               <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-white/60 rounded-br-lg" />
             </div>
 
-            {/* Center reticle */}
             {cameraActive && !scanning && !waitingForContinue && detectionState.hasObject && (
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
                 <div className="w-10 h-10 rounded-full flex items-center justify-center border border-green-500/50">
@@ -741,21 +933,18 @@ const ScanScreen = () => {
               </div>
             )}
 
-            {/* Phase indicator */}
             {scanning && !showNextPrompt && !submitting && (
               <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-md rounded-full px-2 py-0.5 z-30">
-                <span className="text-[9px] font-medium text-white/80">{currentPhaseData.name} Panel</span>
+                <span className="text-[9px] font-medium text-white/80">{currentPhaseData.name} Package</span>
               </div>
             )}
 
-            {/* Scan progress indicator */}
             {scanning && !showNextPrompt && !submitting && (
               <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-md rounded-full px-2 py-0.5 z-30">
                 <span className="text-[9px] font-medium text-green-400">{Math.round(scanProgress)}%</span>
               </div>
             )}
 
-            {/* Success flash */}
             {showSuccess && (
               <div className="absolute inset-0 flex items-center justify-center rounded-2xl z-40 bg-black/60 backdrop-blur-sm animate-fadeIn">
                 <div className="rounded-full p-4 bg-green-500 shadow-lg shadow-green-500/40 animate-bounceIn">
@@ -764,7 +953,6 @@ const ScanScreen = () => {
               </div>
             )}
 
-            {/* Next phase prompt with Continue button (only for front panel) */}
             {showNextPrompt && waitingForContinue && currentPhase < TOTAL_PHASES - 1 && (
               <div className="absolute inset-0 flex flex-col items-center justify-center z-40 rounded-2xl bg-black/85 backdrop-blur-md animate-fadeIn">
                 <div className="text-center px-5 w-full">
@@ -783,7 +971,6 @@ const ScanScreen = () => {
               </div>
             )}
 
-            {/* Submitting overlay (auto after back panel) */}
             {submitting && (
               <div className="absolute inset-0 flex flex-col items-center justify-center z-40 rounded-2xl bg-black/85 backdrop-blur-md animate-fadeIn">
                 <div className="text-center px-5">
@@ -796,7 +983,6 @@ const ScanScreen = () => {
           </div>
         </div>
 
-        {/* ── HINT PILL ── */}
         <div className="mt-3 px-3 w-full flex justify-center">
           <div className="px-4 py-2 rounded-full bg-[#1a1a1a]/90 border border-white/10 max-w-[300px]">
             <p className="text-white/90 text-xs font-medium text-center">{getHintMessage()}</p>
@@ -804,7 +990,6 @@ const ScanScreen = () => {
         </div>
       </div>
 
-      {/* ── BOTTOM CONTROLS ── */}
       <div className="flex-none pb-8 pt-3 px-6">
         <div className="flex items-center justify-between">
           <button onClick={() => { setUploadMode(true); setUploadSlots({ 0: null, 1: null }); setSubmitError(null); }} className="flex flex-col items-center gap-1">

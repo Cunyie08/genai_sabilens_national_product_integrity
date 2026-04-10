@@ -2,18 +2,32 @@
 
 import { scanApi } from './api';
 
-// Save a new scan to history (now uses backend API)
+// Cache configuration
+let scansCache = null;
+let scansCacheTime = null;
+const CACHE_DURATION = 30000; // 30 seconds - adjust as needed
+
+// Track if refresh is needed (set by new scans)
+let refreshNeeded = false;
+
+// Cache for recent scans (separate from full history)
+let recentScansCache = null;
+let recentScansCacheTime = null;
+
+// Save a new scan to history
 export const saveScan = async (scanData) => {
   try {
-    // Check if user is logged in
     const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
     if (!currentUser.id && !currentUser.phone) {
       console.warn('No user logged in, cannot save scan to backend');
       return false;
     }
     
+    const scanId = scanData.id || generateScanId();
+    
     // Prepare scan data for backend
     const payload = {
+      id: scanId,
       product_name: scanData.product,
       product_image_url: scanData.productImage,
       status: scanData.status,
@@ -27,12 +41,18 @@ export const saveScan = async (scanData) => {
       longitude: scanData.longitude,
       confidence_score: scanData.similarity ? scanData.similarity / 100 : scanData.confidence_score,
       scan_data: scanData.details || scanData.aiResult || {},
+      timestamp: scanData.timestamp || Date.now()
     };
     
-    // Call backend API to save scan
     const response = await scanApi.saveScan(payload);
     
     if (response && response.data) {
+      // Mark that refresh is needed for all caches
+      refreshNeeded = true;
+      // Clear caches to force refresh on next load
+      clearScansCache();
+      clearRecentScansCache();
+      
       console.log('Scan saved to backend:', response.data);
       return true;
     }
@@ -43,11 +63,28 @@ export const saveScan = async (scanData) => {
   }
 };
 
-// Alias for backward compatibility - maintains old function name
+// Alias for saveScan (for backward compatibility)
 export const saveScanToHistory = saveScan;
 
-// Get all scans for current user (from backend)
-export const getUserScanHistory = async () => {
+// Clear scans cache
+export const clearScansCache = () => {
+  scansCache = null;
+  scansCacheTime = null;
+};
+
+// Clear recent scans cache
+export const clearRecentScansCache = () => {
+  recentScansCache = null;
+  recentScansCacheTime = null;
+};
+
+// Force refresh on next load
+export const markRefreshNeeded = () => {
+  refreshNeeded = true;
+};
+
+// Get all scans for current user (with caching)
+export const getUserScanHistory = async (forceRefresh = false) => {
   try {
     const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
     if (!currentUser.id && !currentUser.phone) {
@@ -55,12 +92,22 @@ export const getUserScanHistory = async () => {
       return [];
     }
     
+    const shouldRefresh = forceRefresh || refreshNeeded;
+    const isCacheValid = scansCache && scansCacheTime && (Date.now() - scansCacheTime) < CACHE_DURATION;
+    
+    // Return cached data if valid and no refresh needed
+    if (!shouldRefresh && isCacheValid) {
+      console.log('Returning cached scan history');
+      return scansCache;
+    }
+    
+    console.log('Fetching fresh scan history from backend');
     const response = await scanApi.getScanHistory();
     const result = response.data || {};
     const scans = result.scans || result || [];
     
     // Transform backend data to frontend format
-    return scans.map(scan => ({
+    const transformed = scans.map(scan => ({
       id: scan.id,
       product: scan.product_name || 'Unknown Product',
       productImage: scan.product_image_url,
@@ -81,19 +128,49 @@ export const getUserScanHistory = async () => {
       details: scan.scan_data,
       confidence_score: scan.confidence_score
     }));
+    
+    // Update cache
+    scansCache = transformed;
+    scansCacheTime = Date.now();
+    refreshNeeded = false; // Reset refresh flag
+    
+    return transformed;
   } catch (error) {
     console.error('Error loading scan history from backend:', error);
+    return scansCache || [];
+  }
+};
+
+// Get recent scans (with separate cache)
+export const getRecentScans = async (limit = 5, forceRefresh = false) => {
+  try {
+    const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+    if (!currentUser.id && !currentUser.phone) {
+      return [];
+    }
+    
+    const shouldRefresh = forceRefresh || refreshNeeded;
+    const isCacheValid = recentScansCache && recentScansCacheTime && (Date.now() - recentScansCacheTime) < CACHE_DURATION;
+    
+    // Return cached data if valid and no refresh needed
+    if (!shouldRefresh && isCacheValid) {
+      console.log('Returning cached recent scans');
+      return recentScansCache.slice(0, limit);
+    }
+    
+    // Fetch full history and cache recent scans
+    const fullHistory = await getUserScanHistory(forceRefresh);
+    recentScansCache = fullHistory;
+    recentScansCacheTime = Date.now();
+    
+    return fullHistory.slice(0, limit);
+  } catch (error) {
+    console.error('Error loading recent scans:', error);
     return [];
   }
 };
 
-// Get recent scans (last N for home screen)
-export const getRecentScans = async (limit = 5) => {
-  const history = await getUserScanHistory();
-  return history.slice(0, limit);
-};
-
-// Get scan by ID
+// Get scan by ID (no caching needed for single scan)
 export const getScanById = async (scanId) => {
   try {
     const response = await scanApi.getScanById(scanId);
@@ -125,29 +202,43 @@ export const getScanById = async (scanId) => {
   }
 };
 
-// Delete a specific scan by ID
+// Delete a specific scan by ID (invalidate cache)
 export const deleteScan = async (scanId) => {
   try {
     const response = await scanApi.deleteScan(scanId);
-    return response && response.success !== false;
+    if (response && response.success !== false) {
+      // Invalidate caches
+      refreshNeeded = true;
+      clearScansCache();
+      clearRecentScansCache();
+      return true;
+    }
+    return false;
   } catch (error) {
     console.error('Error deleting scan:', error);
     return false;
   }
 };
 
-// Clear all scan history for current user
+// Clear all scan history (invalidate cache)
 export const clearScanHistory = async () => {
   try {
     const response = await scanApi.clearScanHistory();
-    return response && response.success !== false;
+    if (response && response.success !== false) {
+      // Invalidate caches
+      refreshNeeded = true;
+      clearScansCache();
+      clearRecentScansCache();
+      return true;
+    }
+    return false;
   } catch (error) {
     console.error('Error clearing scan history:', error);
     return false;
   }
 };
 
-// Get scan count by status (from backend)
+// Get scan count by status (from cache or fresh)
 export const getScanStats = async () => {
   try {
     const history = await getUserScanHistory();
@@ -163,21 +254,29 @@ export const getScanStats = async () => {
   }
 };
 
-// Get product image (fallback function - returns null to use placeholder icons)
+// Get product image (fallback function)
 export const getProductImage = (productName, category) => {
-  // Return null to use placeholder icons instead of hardcoded images
   return null;
 };
 
-// Generate a unique scan ID (for frontend use only)
+// Generate a unique scan ID
 export const generateScanId = () => {
   return `scan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 };
 
-// Default export for convenience
+// Force refresh on window focus (optional - for when user returns to app)
+export const setupAutoRefresh = () => {
+  const handleFocus = () => {
+    refreshNeeded = true;
+  };
+  window.addEventListener('focus', handleFocus);
+  return () => window.removeEventListener('focus', handleFocus);
+};
+
+// Default export
 export default {
   saveScan,
-  saveScanToHistory,
+  saveScanToHistory: saveScan,
   getUserScanHistory,
   getRecentScans,
   getScanById,
@@ -185,5 +284,9 @@ export default {
   clearScanHistory,
   getScanStats,
   getProductImage,
-  generateScanId
+  generateScanId,
+  clearScansCache,
+  clearRecentScansCache,
+  markRefreshNeeded,
+  setupAutoRefresh
 };

@@ -78,6 +78,7 @@ const Home = () => {
 
   const handleScanItemPress = (scan) => {
     // Show modal instead of navigating
+    console.log('Scan clicked:', scan); // Debug log
     setSelectedScan(scan);
   };
 
@@ -91,48 +92,84 @@ const Home = () => {
 
   const handleViewDetails = () => {
     if (selectedScan) {
-      // Close modal and navigate to full report
-      const scanData = selectedScan;
-      setSelectedScan(null);
+      // Get status - ensure it's lowercase
+      let statusLower = (selectedScan.status || '').toLowerCase();
       
-      // Store scan data in sessionStorage for the result page
+      // Debug log
+      console.log('Selected scan status:', selectedScan.status, 'Normalized:', statusLower);
+      
+      // Fallback - if status is empty, try to determine from other fields
+      if (!statusLower || statusLower === '') {
+        if (selectedScan.verified === true) {
+          statusLower = 'authentic';
+        } else if (selectedScan.similarity && selectedScan.similarity < 30) {
+          statusLower = 'fake';
+        } else {
+          statusLower = 'suspicious';
+        }
+      }
+      
+      const statusUpper = statusLower === 'authentic' ? 'AUTHENTIC' : statusLower === 'fake' ? 'FAKE' : 'SUSPICIOUS';
+      const confidenceValue = selectedScan.similarity || (statusLower === 'authentic' ? 92 : statusLower === 'fake' ? 95 : 55);
+      
       sessionStorage.setItem('currentScan', JSON.stringify({
-        productImage: scanData.productImage,
-        imageUrl: scanData.productImage,
-        product_name: scanData.product,
+        productImage: selectedScan.productImage,
+        imageUrl: selectedScan.productImage,
+        product_name: selectedScan.product,
         aiResult: {
-          final_verdict: scanData.status === 'authentic' ? 'AUTHENTIC' : scanData.status === 'fake' ? 'FAKE' : 'SUSPICIOUS',
-          confidence_score: scanData.similarity ? scanData.similarity / 100 : 0.45,
+          final_verdict: statusUpper,
+          confidence_score: confidenceValue / 100,
+          display_confidence: confidenceValue,
+          confidence_label: statusLower === 'authentic' ? 'Authenticity Confidence' : statusLower === 'fake' ? 'Counterfeit Confidence' : 'Suspicion Confidence',
+          simple_instruction: selectedScan.instruction || (
+            statusLower === 'authentic' 
+              ? 'This product appears authentic. Safe to purchase.'
+              : statusLower === 'fake'
+              ? 'Do not buy this product. It appears to be counterfeit.'
+              : 'This product shows some irregularities. Please verify before use.'
+          ),
           evidence_package: {
-            product_name: scanData.product,
-            category: scanData.category,
-            manufacturer: scanData.manufacturer,
-            nafdac_number: scanData.nafdacNumber,
-            batch_number: scanData.batchNumber,
-            expiry_date: scanData.expiryDate
+            product_name: selectedScan.product,
+            category: selectedScan.category,
+            manufacturer: selectedScan.manufacturer,
+            nafdac_number: selectedScan.nafdacNumber,
+            batch_number: selectedScan.batchNumber,
+            expiry_date: selectedScan.expiryDate
           },
-          warnings: scanData.warnings || [],
-          signals_used: scanData.signalsUsed || []
+          warnings: selectedScan.warnings || [],
+          signals_used: selectedScan.signalsUsed || [],
+          summary: selectedScan.summary || '',
+          detail: selectedScan.detail || '',
+          severity: selectedScan.severity || (statusLower === 'fake' ? 'CRITICAL' : statusLower === 'suspicious' ? 'MEDIUM' : 'LOW'),
+          action: selectedScan.action || (statusLower === 'fake' ? 'DO NOT BUY' : statusLower === 'suspicious' ? 'VERIFY BEFORE USE' : 'BUY')
         },
         fromHistory: true,
-        scan_id: scanData.id,
-        location: scanData.location,
-        latitude: scanData.latitude,
-        longitude: scanData.longitude
+        scan_id: selectedScan.id,
+        location: selectedScan.location,
+        latitude: selectedScan.latitude,
+        longitude: selectedScan.longitude
       }));
       
-      if (scanData.status === 'authentic') {
+      // Close modal
+      setSelectedScan(null);
+      
+      // Navigate based on status
+      console.log('Navigating to:', statusLower);
+      if (statusLower === 'authentic') {
         navigate('/scan/safe');
-      } else if (scanData.status === 'fake') {
+      } else if (statusLower === 'fake') {
         navigate('/scan/fake');
-      } else {
+      } else if (statusLower === 'suspicious') {
         navigate('/scan/suspicious');
+      } else {
+        navigate('/scan/suspicious'); // Default to suspicious
       }
     }
   };
 
   const getStatusIcon = (status) => {
-    switch(status) {
+    const statusLower = (status || '').toLowerCase();
+    switch(statusLower) {
       case 'authentic':
         return <Icon name="CheckCircle" size={20} className="text-success" library="fi" />;
       case 'suspicious':
@@ -145,7 +182,8 @@ const Home = () => {
   };
 
   const getStatusBadge = (status) => {
-    switch(status) {
+    const statusLower = (status || '').toLowerCase();
+    switch(statusLower) {
       case 'authentic':
         return <span className="px-2 py-0.5 bg-success/10 text-success text-xs rounded-full font-medium">Authentic</span>;
       case 'suspicious':
@@ -204,7 +242,7 @@ const Home = () => {
       />
       <ConsumerBottomNav />
 
-      {/* Scan Detail Modal - Same as ScanHistory */}
+      {/* Scan Detail Modal */}
       <Modal
         isOpen={!!selectedScan}
         onClose={handleCloseModal}

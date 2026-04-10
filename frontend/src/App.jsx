@@ -20,6 +20,12 @@ import HelpSupport from './pages/consumer/HelpSupport';
 import EditProfile from './pages/consumer/EditProfile';
 import RoleSelect from './pages/consumer/RoleSelect';
 
+// Scan Result Components
+import ScanResultSafe from './components/consumer/Scan/ScanResultSafe';
+import ScanResultFake from './components/consumer/Scan/ScanResultFake';
+import ScanResultSuspicious from './components/consumer/Scan/ScanResultSuspicious';
+import ScanResultRescan from './components/consumer/Scan/ScanResultRescan';
+
 // Company Pages
 import CompanyLogin from './pages/company/Login';
 import CompanySignup from './pages/company/Signup';
@@ -148,7 +154,11 @@ function App() {
         {/* Protected Consumer Routes */}
         <Route path="/home" element={<ConsumerProtectedRoute><Home /></ConsumerProtectedRoute>} />
         <Route path="/scan" element={<ConsumerProtectedRoute><Scan /></ConsumerProtectedRoute>} />
-        <Route path="/scan/:result" element={<ConsumerProtectedRoute><ScanResult /></ConsumerProtectedRoute>} />
+        <Route path="/scan/result" element={<ConsumerProtectedRoute><ScanResult /></ConsumerProtectedRoute>} />
+        <Route path="/scan/safe" element={<ConsumerProtectedRoute><ScanResultSafe /></ConsumerProtectedRoute>} />
+        <Route path="/scan/fake" element={<ConsumerProtectedRoute><ScanResultFake /></ConsumerProtectedRoute>} />
+        <Route path="/scan/suspicious" element={<ConsumerProtectedRoute><ScanResultSuspicious /></ConsumerProtectedRoute>} />
+        <Route path="/scan/rescan" element={<ConsumerProtectedRoute><ScanResultRescan /></ConsumerProtectedRoute>} />
         <Route path="/report" element={<ConsumerProtectedRoute><Report /></ConsumerProtectedRoute>} />
         <Route path="/profile" element={<ConsumerProtectedRoute><Profile /></ConsumerProtectedRoute>} />
         <Route path="/scan-history" element={<ConsumerProtectedRoute><ScanHistory /></ConsumerProtectedRoute>} />
