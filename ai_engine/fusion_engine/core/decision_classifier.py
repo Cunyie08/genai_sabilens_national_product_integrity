@@ -56,6 +56,7 @@ _ACTION_MAP = {
     "SUSPICIOUS":       "CAUTION",
     "FAKE":             "DO NOT BUY",
     "RESCAN_REQUIRED":  "RESCAN",
+    "NOT_VERIFIED":    "VERIFY", 
 }
 
 # NAFDAC report priority map 
@@ -63,34 +64,41 @@ _REPORT_PRIORITY = {
     "AUTHENTIC":        "NONE",
     "SUSPICIOUS":       "PROMPT",
     "FAKE":             "AUTO",
-    "RESCAN_REQUIRED":  "NONE",    # No report for rejected scans - image saved for retraining
+    "RESCAN_REQUIRED":  "NONE",      # No report for rejected scans, image saved for retraining
+    "NOT_VERIFIED":    "NONE",       # Not confirmed fake; no report filed
 }
 
 # User-facing instruction templates 
 # Full instruction templates (N-ATLAS for Yoruba/Hausa/Igbo/Pidgin) 
 _INSTRUCTIONS = {
     "AUTHENTIC": (
-        "This product has passed all verification checks. "
-        "The NAFDAC number is valid, the brand is authentic, "
-        "and the product category matches its registration. "
+        "This product has passed all verification checks."
+        "The NAFDAC number is valid, the brand is authentic,"
+        "and the product category matches its registration."
         "It is safe to purchase."
     ),
     "SUSPICIOUS": (
-        "This product raised concerns during verification. "
-        "We could not fully confirm its authenticity. "
-        "Proceed with caution. If possible, purchase from a "
+        "This product raised concerns during verification."
+        "We could not fully confirm its authenticity."
+        "Proceed with caution. If possible, purchase from a"
         "different vendor or verify with NAFDAC directly."
     ),
     "FAKE": (
-        "WARNING: This product has FAILED verification. "
-        "It shows strong signs of being counterfeit. "
-        "Do NOT purchase this product. "
+        "WARNING: This product has FAILED verification."
+        "It shows strong signs of being counterfeit."
+        "Do NOT purchase this product."
         "Your scan has been logged and reported to NAFDAC."
     ),
     "RESCAN_REQUIRED": (
-        "We could not scan this product clearly. "
+        "We could not scan this product clearly."
         "Please hold your phone steady in good lighting and try again."
     ),
+    "NOT_VERIFIED": (                     
+        "This product could not be verified in the SabiLens database."
+        "This does not mean it is fake; our database is still growing."
+        "and may not yet cover all registered NAFDAC products."
+        "Check the NAFDAC number directly at www.nafdac.gov.ng before purchasing."
+    )
 }
 
 
@@ -101,6 +109,7 @@ _SIMPLE_INSTRUCTIONS = {
     "SUSPICIOUS":       "We are not sure about this product. Be careful.",
     "FAKE":             "Do not buy this product. It is fake. We have reported it.",
     "RESCAN_REQUIRED":  "We could not read this product clearly. Please try scanning again.",
+    "NOT_VERIFIED":    "We could not find this product in our database. Check with NAFDAC before buying.",
 }
 
 #  Warning type: atlas instruction appendage 
@@ -124,7 +133,7 @@ _WARNING_APPENDAGES = {
     ),
 }
 
-
+# Main classify function
 def classify(fusion_result: dict) -> dict:
     """
     Maps a fusion engine result to a final user-facing decision.
@@ -133,25 +142,8 @@ def classify(fusion_result: dict) -> dict:
         fusion_result: Output dict from core/fusion_engine.run_fusion()
 
     Returns:
-        ClassificationResult dict:
-        {
-            "action":             str,   # "BUY" | "CAUTION" | "DO NOT BUY THIS PRODUCT. IT IS A COUNTERFEIT." | "RESCAN"
-            "verdict":            str,   # "AUTHENTIC" | "SUSPICIOUS" | "FAKE" | "RESCAN_REQUIRED"
-            "final_score":        float | None,
-            "severity":           str,
-            "confidence_label":   str,
-            "report_priority":    str,   # "AUTO" | "PROMPT" | "NONE"
-            "instruction":        str,   # Full instruction for N-ATLAS
-            "simple_instruction": str,   # Short voice-first instruction
-            "atlas_instruction":  str,   # Full instruction + warning appendages
-            "override_applied":   bool,
-            "override_summary":   str | None,
-            "warnings":           list,
-            "evidence":           dict,  # Forwarded to evidence_packager
-            "breakdown":          dict,  # Score breakdown per signal
-            "scan_id":            str,
-            "timestamp":          str,
-        }
+        ClassificationResult dict consumed by evidence_packager.package()
+        and returned to the API layer via main.py run_scan().
     """
 
 
@@ -165,17 +157,28 @@ def classify(fusion_result: dict) -> dict:
     evidence        = fusion_result.get("evidence", {})
     breakdown       = fusion_result.get("breakdown", {})
 
-        # Override simple instruction for NOT_FOUND; different from a confirmed fake
-    reg_status = fusion_result.get("evidence", {}).get("reg_status_code", "")
-    if verdict == "FAKE" and reg_status == "NOT_FOUND":
-        simple_instruction = (
-            "We could not verify this product in our database. "
-            "This product may be genuine but "
-            "is not yet in our verified product registry. "
-            "Check directly with NAFDAC at www.nafdac.gov.ng to confirm."
-        )
-    else:
-        simple_instruction = _SIMPLE_INSTRUCTIONS.get(verdict, _SIMPLE_INSTRUCTIONS["FAKE"])
+    # Product not in SabiLens DB is a coverage gap, not a confirmed counterfeit.
+    # Intercept BEFORE action/priority/instruction are built so the corrected
+    # verdict flows through all four maps automatically.
+    #
+    # Rules:
+    #   visual < 0.60 AND ocr < 0.60   :  both signals weak + not in DB
+    #                                  :  genuinely unknown, NOT_VERIFIED
+    #   visual >= 0.60                 :  product looks authentic visually
+    #                                  :  downgrade FAKE to SUSPICIOUS
+    #   strong counterfeit signals     :  FAKE preserved (reg_status not NOT_FOUND)
+
+    reg_status   = evidence.get("reg_status_code", "")
+    visual_score = breakdown.get("visual", {}).get("raw_score", 0.0)
+    ocr_score    = breakdown.get("ocr",    {}).get("raw_score", 0.0)
+
+    if reg_status == "NOT_FOUND" and verdict in ("FAKE", "SUSPICIOUS"):
+        if visual_score < 0.60 and ocr_score < 0.60:
+            # Both signals weak + not in DB = genuinely unknown
+            verdict = "NOT_VERIFIED"
+        elif verdict == "FAKE":
+            # Visual looks reasonable but reg missing — downgrade to SUSPICIOUS
+            verdict = "SUSPICIOUS"
 
     # Core classification 
     action           = _ACTION_MAP.get(verdict, "DO NOT BUY THIS PRODUCT. IT IS A COUNTERFEIT.")
@@ -242,30 +245,22 @@ def _build_instruction(verdict: str, fusion_result: dict) -> str:
     # Prefer the DB-registered name; fall back to visual match; fall back to generic
     product_name = (
         evidence.get("nafdac_registered_product") or
-        evidence.get("product_matched_visual") or
+        evidence.get("product_matched_visual")    or
         "this product"
     )
-    nafdac = evidence.get("nafdac_number", "") or ""
+    nafdac     = evidence.get("nafdac_number",   "") or ""
     reg_status = evidence.get("reg_status_code", "") or ""
 
-    # Enrich FAKE instructions with specific failure reason
     if verdict == "FAKE":
         if reg_status == "SUBCATEGORY_MISMATCH":
-            registered_cat = (breakdown.get("regulatory", {}).get("nafdac_registered_category") or
+            registered_cat = (
+                breakdown.get("reg", {}).get("nafdac_registered_category") or
                 "a different category"
             )
             base += (
                 f" The NAFDAC number on this product ({nafdac}) is registered "
-                f"for a '{registered_cat}' product - not what you are holding. "
+                f"for a '{registered_cat}' product — not what you are holding. "
                 f"This is a classic counterfeit pattern."
-            )
-        elif reg_status == "NOT_FOUND":
-            nafdac_str = f" '{nafdac}'" if nafdac else ""
-            base += (
-            f" The NAFDAC number{nafdac_str} could not be verified "
-            f"in our current database. This product may be genuine but "
-            f"is not yet in our verified product registry. "
-            f"Check directly with NAFDAC at www.nafdac.gov.ng to confirm."
             )
         elif reg_status == "EXPIRED":
             base += (
@@ -274,21 +269,27 @@ def _build_instruction(verdict: str, fusion_result: dict) -> str:
             )
         elif reg_status == "AGENT_ERROR":
             base += (
-                "The NAFDAC verification system could not be reached. "
+                " The NAFDAC verification system could not be reached. "
                 "Authenticity cannot be confirmed. Do not purchase this product."
             )
-        
 
     elif verdict == "AUTHENTIC":
         base += f" Confirmed product: {product_name}."
 
     elif verdict == "SUSPICIOUS":
-        # Adds the most specific reason available
         if not evidence.get("nafdac_number"):
             base += (
                 " The NAFDAC number could not be read from this label. "
                 "A genuine product always has a visible, scannable NAFDAC number."
             )
+
+    elif verdict == "NOT_VERIFIED":
+        nafdac_str = f" ({nafdac})" if nafdac else ""
+        base += (
+            f" The NAFDAC number{nafdac_str} was not found in the SabiLens "
+            f"verified product registry. As our database grows, this product "
+            f"may be added. For now, verify at www.nafdac.gov.ng."
+        )
 
     return base
 
@@ -297,7 +298,7 @@ def _inject_warnings(instruction: str, warnings: list) -> str:
     """
     Append warning appendages to the atlas_instruction string.
     Each warning type in _WARNING_APPENDAGES is appended once if present.
-    Preserves insertion order, most critical warnings appear first.
+    Preserves insertion order — most critical warnings appear first.
 
     Args:
         instruction: Base instruction string from _build_instruction().
@@ -316,5 +317,6 @@ def _inject_warnings(instruction: str, warnings: list) -> str:
             seen_types.add(w_type)
 
     return result
+
 
 
