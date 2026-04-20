@@ -141,6 +141,10 @@ def _normalise_result(ai_result: dict) -> dict:
         display_confidence     = 0.0
         confidence_label       = "Image too blurry to scan"
         confidence_description = "Please retake the photo in better lighting"
+    elif verdict_upper == "NOT_VERIFIED":
+        display_confidence     = 0.0
+        confidence_label       = "Not in our database"
+        confidence_description = "This product has not been verified — check NAFDAC directly"
     else:
         display_confidence     = raw_confidence
         confidence_label       = f"{raw_confidence}%"
@@ -406,8 +410,8 @@ async def submit_scan(
                 logger.info("Back image uploaded: %s", back_url)
 
         # Save scan to DB in background
-        # user_id = current_user.id if current_user else None
-        # asyncio.create_task(_save_scan_to_db(data, req, image_url, user_id=user_id))
+        user_id = current_user.id if current_user else None
+        asyncio.create_task(_save_scan_to_db(data, req, image_url, user_id=user_id))
 
         return success_response(data=data, message="Scan analysis complete")
 
@@ -762,4 +766,4 @@ async def get_scan_stats(
         
     except Exception as e:
         logger.error(f"Error getting scan stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))"
