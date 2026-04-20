@@ -37,6 +37,7 @@ env/
 ENV/
 .env
 backend\.env
-
-
 chroma_db/
+generate_privacy_policy_pdf
+PRIVACY_POLICY
+SabiLens_Privacy_Policy
