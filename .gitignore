@@ -37,3 +37,6 @@ env/
 ENV/
 .env
 backend\.env
+generate_privacy_policy_pdf
+PRIVACY_POLICY
+SabiLens_Privacy_Policy
