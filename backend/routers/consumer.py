@@ -581,6 +581,12 @@ async def save_scan_to_history(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/scan/health")
+async def scan_health():
+    """Quick liveness check for the consumer scan service."""
+    return success_response(data={"status": "ok"}, message="Consumer scan service is running")
+
+
 @router.get("/scan/{scan_id}")
 async def get_scan_by_id(
     scan_id: str,
@@ -714,12 +720,6 @@ async def clear_all_scans(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/scan/health")
-async def scan_health():
-    """Quick liveness check for the consumer scan service."""
-    return success_response(data={"status": "ok"}, message="Consumer scan service is running")
-
-
 @router.get("/scans/stats")
 async def get_scan_stats(
     current_user = Depends(get_current_user),
@@ -766,4 +766,4 @@ async def get_scan_stats(
         
     except Exception as e:
         logger.error(f"Error getting scan stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))"
+        raise HTTPException(status_code=500, detail=str(e))
