@@ -1,217 +1,292 @@
-// Scan history service to manage user scans
+// src/services/scanHistory.js
 
-// Product images mapping for real product photos
-export const PRODUCT_IMAGES = {
-  // Nike Air Max 270
-  'Nike Air Max 270': 'https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/ec87d9f5-e1cb-4f3b-90a1-6d25d770ae3c/air-max-270-mens-shoes-KkLcRc.png',
-  'Air Max 270': 'https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/ec87d9f5-e1cb-4f3b-90a1-6d25d770ae3c/air-max-270-mens-shoes-KkLcRc.png',
-  
-  // Gucci Marmont
-  'Gucci Marmont Mini': 'https://media.gucci.com/style/DarkGray_Center_0_0_800x800/1648227729/476432_DTDCT_1000_001_100_0000_Light-GG-Marmont-mini-chain-bag.jpg',
-  'Gucci': 'https://media.gucci.com/style/DarkGray_Center_0_0_800x800/1648227729/476432_DTDCT_1000_001_100_0000_Light-GG-Marmont-mini-chain-bag.jpg',
-  
-  // Apple Watch
-  'Apple Watch Series 9': 'https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/MKU83_VW_34FR+watch-49-titanium-ultra2_VW_34FR_WF_CO?wid=1400&hei=1400&fmt=jpeg&qlt=95&.v=1694507915513',
-  'Apple Watch': 'https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/MKU83_VW_34FR+watch-49-titanium-ultra2_VW_34FR_WF_CO?wid=1400&hei=1400&fmt=jpeg&qlt=95&.v=1694507915513',
-  
-  // Pharmaceuticals
-  'Lagos Pharma Malaria Tablets': 'https://5.imimg.com/data5/SELLER/Default/2022/7/NL/MY/HY/1853310/malaria-tablets-500x500.jpg',
-  'Malaria Tablets': 'https://5.imimg.com/data5/SELLER/Default/2022/7/NL/MY/HY/1853310/malaria-tablets-500x500.jpg',
-  
-  // Dairy products
-  'Dano Milk 1L': 'https://www.danone.com/content/dam/danone-corp/danone-com/products/2022/danone-dairy-dano-milk-1l.png',
-  'Dano Milk': 'https://www.danone.com/content/dam/danone-corp/danone-com/products/2022/danone-dairy-dano-milk-1l.png',
-  'Peak Milk Powder': 'https://www.frieslandcampina.com.ng/wp-content/uploads/sites/7/2020/09/peak-1.png',
-  
-  // Food products
-  'Indomie Noodles': 'https://www.indomie.com/wp-content/uploads/2021/03/indomie-chicken-1.png',
-  'Indomie': 'https://www.indomie.com/wp-content/uploads/2021/03/indomie-chicken-1.png',
-  
-  // Beverages
-  'Coca-Cola 50cl': 'https://www.coca-cola.com/content/dam/one-content/ng/en/products/coca-cola-original.png',
-  'Coca-Cola': 'https://www.coca-cola.com/content/dam/one-content/ng/en/products/coca-cola-original.png',
-  
-  // Default fallback images by category
-  'Footwear': 'https://images.unsplash.com/photo-1549298916-b41d501d3772?w=500',
-  'Fashion': 'https://images.unsplash.com/photo-1539008835657-9e8e9680c956?w=500',
-  'Electronics': 'https://images.unsplash.com/photo-1546868871-7041f2a55e12?w=500',
-  'Pharmaceuticals': 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=500',
-  'Dairy': 'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=500',
-  'Food': 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500',
-  'Beverages': 'https://images.unsplash.com/photo-1543253687-c931c8e01820?w=500',
-};
+import { scanApi } from './api';
+
+// Cache configuration
+let scansCache = null;
+let scansCacheTime = null;
+const CACHE_DURATION = 30000; // 30 seconds - adjust as needed
+
+// Track if refresh is needed (set by new scans)
+let refreshNeeded = false;
+
+// Cache for recent scans (separate from full history)
+let recentScansCache = null;
+let recentScansCacheTime = null;
 
 // Save a new scan to history
-export const saveScanToHistory = (scanData) => {
-  const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-  if (!currentUser.phone) return [];
-  
-  // Get existing history for this user
-  const historyKey = `scanHistory_${currentUser.phone}`;
-  const existingHistory = JSON.parse(localStorage.getItem(historyKey) || '[]');
-  
-  // Get product image
-  const productImage = getProductImage(scanData.product, scanData.category);
-  
-  // Add new scan with timestamp and image
-  const newScan = {
-    id: `scan_${Date.now()}`,
-    ...scanData,
-    productImage: scanData.productImage || scanData.capturedImage || productImage, // Prefer Cloudinary URL, then captured, then category fallback
-    timestamp: new Date().toISOString(),
-    userPhone: currentUser.phone
-  };
-  
-  // Add to beginning of array (most recent first)
-  const updatedHistory = [newScan, ...existingHistory];
-  
-  // Keep only last 50 scans to prevent localStorage overflow
-  const trimmedHistory = updatedHistory.slice(0, 50);
-  
-  localStorage.setItem(historyKey, JSON.stringify(trimmedHistory));
-  
-  // Also mark that user has scanned
-  localStorage.setItem('hasScanned', 'true');
-  
-  return trimmedHistory;
+export const saveScan = async (scanData) => {
+  try {
+    const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+    if (!currentUser.id && !currentUser.phone) {
+      console.warn('No user logged in, cannot save scan to backend');
+      return false;
+    }
+    
+    const scanId = scanData.id || generateScanId();
+    
+    // Prepare scan data for backend
+    const payload = {
+      id: scanId,
+      product_name: scanData.product,
+      product_image_url: scanData.productImage,
+      status: scanData.status,
+      category: scanData.category,
+      manufacturer: scanData.manufacturer,
+      nafdac_number: scanData.nafdacNumber,
+      batch_number: scanData.batchNumber,
+      expiry_date: scanData.expiryDate,
+      location_text: scanData.location,
+      latitude: scanData.latitude,
+      longitude: scanData.longitude,
+      confidence_score: scanData.similarity ? scanData.similarity / 100 : scanData.confidence_score,
+      scan_data: scanData.details || scanData.aiResult || {},
+      timestamp: scanData.timestamp || Date.now()
+    };
+    
+    const response = await scanApi.saveScan(payload);
+    
+    if (response && response.data) {
+      // Mark that refresh is needed for all caches
+      refreshNeeded = true;
+      // Clear caches to force refresh on next load
+      clearScansCache();
+      clearRecentScansCache();
+      
+      console.log('Scan saved to backend:', response.data);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('Error saving scan to backend:', error);
+    return false;
+  }
 };
 
-// Get product image based on name or category
+// Alias for saveScan (for backward compatibility)
+export const saveScanToHistory = saveScan;
+
+// Clear scans cache
+export const clearScansCache = () => {
+  scansCache = null;
+  scansCacheTime = null;
+};
+
+// Clear recent scans cache
+export const clearRecentScansCache = () => {
+  recentScansCache = null;
+  recentScansCacheTime = null;
+};
+
+// Force refresh on next load
+export const markRefreshNeeded = () => {
+  refreshNeeded = true;
+};
+
+// Get all scans for current user (with caching)
+export const getUserScanHistory = async (forceRefresh = false) => {
+  try {
+    const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+    if (!currentUser.id && !currentUser.phone) {
+      console.warn('No user logged in');
+      return [];
+    }
+    
+    const shouldRefresh = forceRefresh || refreshNeeded;
+    const isCacheValid = scansCache && scansCacheTime && (Date.now() - scansCacheTime) < CACHE_DURATION;
+    
+    // Return cached data if valid and no refresh needed
+    if (!shouldRefresh && isCacheValid) {
+      console.log('Returning cached scan history');
+      return scansCache;
+    }
+    
+    console.log('Fetching fresh scan history from backend');
+    const response = await scanApi.getScanHistory();
+    const result = response.data || {};
+    const scans = result.scans || result || [];
+    
+    // Transform backend data to frontend format
+    const transformed = scans.map(scan => ({
+      id: scan.id,
+      product: scan.product_name || 'Unknown Product',
+      productImage: scan.product_image_url,
+      status: scan.status?.toLowerCase() || 'suspicious',
+      time: scan.created_at ? new Date(scan.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recently',
+      date: scan.created_at,
+      timestamp: new Date(scan.created_at).getTime(),
+      category: scan.category,
+      manufacturer: scan.manufacturer,
+      nafdacNumber: scan.nafdac_number,
+      batchNumber: scan.batch_number,
+      expiryDate: scan.expiry_date,
+      location: scan.location_text,
+      latitude: scan.latitude,
+      longitude: scan.longitude,
+      similarity: scan.confidence_score ? Math.round(scan.confidence_score * 100) : null,
+      verified: scan.status === 'AUTHENTIC',
+      details: scan.scan_data,
+      confidence_score: scan.confidence_score
+    }));
+    
+    // Update cache
+    scansCache = transformed;
+    scansCacheTime = Date.now();
+    refreshNeeded = false; // Reset refresh flag
+    
+    return transformed;
+  } catch (error) {
+    console.error('Error loading scan history from backend:', error);
+    return scansCache || [];
+  }
+};
+
+// Get recent scans (with separate cache)
+export const getRecentScans = async (limit = 5, forceRefresh = false) => {
+  try {
+    const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+    if (!currentUser.id && !currentUser.phone) {
+      return [];
+    }
+    
+    const shouldRefresh = forceRefresh || refreshNeeded;
+    const isCacheValid = recentScansCache && recentScansCacheTime && (Date.now() - recentScansCacheTime) < CACHE_DURATION;
+    
+    // Return cached data if valid and no refresh needed
+    if (!shouldRefresh && isCacheValid) {
+      console.log('Returning cached recent scans');
+      return recentScansCache.slice(0, limit);
+    }
+    
+    // Fetch full history and cache recent scans
+    const fullHistory = await getUserScanHistory(forceRefresh);
+    recentScansCache = fullHistory;
+    recentScansCacheTime = Date.now();
+    
+    return fullHistory.slice(0, limit);
+  } catch (error) {
+    console.error('Error loading recent scans:', error);
+    return [];
+  }
+};
+
+// Get scan by ID (no caching needed for single scan)
+export const getScanById = async (scanId) => {
+  try {
+    const response = await scanApi.getScanById(scanId);
+    if (response && response.data) {
+      const scan = response.data;
+      return {
+        id: scan.id,
+        product: scan.product_name || 'Unknown Product',
+        productImage: scan.product_image_url,
+        status: scan.status?.toLowerCase() || 'suspicious',
+        time: scan.created_at ? new Date(scan.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recently',
+        date: scan.created_at,
+        timestamp: new Date(scan.created_at).getTime(),
+        category: scan.category,
+        manufacturer: scan.manufacturer,
+        nafdacNumber: scan.nafdac_number,
+        batchNumber: scan.batch_number,
+        expiryDate: scan.expiry_date,
+        location: scan.location_text,
+        similarity: scan.confidence_score ? Math.round(scan.confidence_score * 100) : null,
+        verified: scan.status === 'AUTHENTIC',
+        details: scan.scan_data
+      };
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting scan by ID:', error);
+    return null;
+  }
+};
+
+// Delete a specific scan by ID (invalidate cache)
+export const deleteScan = async (scanId) => {
+  try {
+    const response = await scanApi.deleteScan(scanId);
+    if (response && response.success !== false) {
+      // Invalidate caches
+      refreshNeeded = true;
+      clearScansCache();
+      clearRecentScansCache();
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('Error deleting scan:', error);
+    return false;
+  }
+};
+
+// Clear all scan history (invalidate cache)
+export const clearScanHistory = async () => {
+  try {
+    const response = await scanApi.clearScanHistory();
+    if (response && response.success !== false) {
+      // Invalidate caches
+      refreshNeeded = true;
+      clearScansCache();
+      clearRecentScansCache();
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('Error clearing scan history:', error);
+    return false;
+  }
+};
+
+// Get scan count by status (from cache or fresh)
+export const getScanStats = async () => {
+  try {
+    const history = await getUserScanHistory();
+    return {
+      total: history.length,
+      authentic: history.filter(s => s.status === 'authentic').length,
+      suspicious: history.filter(s => s.status === 'suspicious').length,
+      fake: history.filter(s => s.status === 'fake').length
+    };
+  } catch (error) {
+    console.error('Error getting scan stats:', error);
+    return { total: 0, authentic: 0, suspicious: 0, fake: 0 };
+  }
+};
+
+// Get product image (fallback function)
 export const getProductImage = (productName, category) => {
-  // Try to find exact product match
-  for (const [key, value] of Object.entries(PRODUCT_IMAGES)) {
-    if (productName?.toLowerCase().includes(key.toLowerCase())) {
-      return value;
-    }
-  }
-  
-  // Fallback to category image
-  if (category && PRODUCT_IMAGES[category]) {
-    return PRODUCT_IMAGES[category];
-  }
-  
-  // Default fallback
-  return 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=500';
+  return null;
 };
 
-// Get all scans for current user
-export const getUserScanHistory = () => {
-  const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-  if (!currentUser.phone) return [];
-  
-  const historyKey = `scanHistory_${currentUser.phone}`;
-  return JSON.parse(localStorage.getItem(historyKey) || '[]');
+// Generate a unique scan ID
+export const generateScanId = () => {
+  return `scan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 };
 
-// Get recent scans (last 3 for home screen)
-export const getRecentScans = (limit = 3) => {
-  const allScans = getUserScanHistory();
-  return allScans.slice(0, limit);
-};
-
-// Get scan by ID
-export const getScanById = (scanId) => {
-  const allScans = getUserScanHistory();
-  return allScans.find(scan => scan.id === scanId);
-};
-
-// Clear all scan history for current user
-export const clearScanHistory = () => {
-  const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-  if (!currentUser.phone) return;
-  
-  const historyKey = `scanHistory_${currentUser.phone}`;
-  localStorage.removeItem(historyKey);
-};
-
-// Generate mock scan data for demo purposes with real images
-export const generateMockScan = (isAuthentic = true) => {
-  const products = [
-    { 
-      name: 'Nike Air Max 270', 
-      category: 'Footwear', 
-      manufacturer: 'Nike Inc.', 
-      nafdac: 'B1-4022-XP',
-      image: 'https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/ec87d9f5-e1cb-4f3b-90a1-6d25d770ae3c/air-max-270-mens-shoes-KkLcRc.png'
-    },
-    { 
-      name: 'Gucci Marmont Mini', 
-      category: 'Fashion', 
-      manufacturer: 'Gucci', 
-      nafdac: 'B1-4023-XP',
-      image: 'https://media.gucci.com/style/DarkGray_Center_0_0_800x800/1648227729/476432_DTDCT_1000_001_100_0000_Light-GG-Marmont-mini-chain-bag.jpg'
-    },
-    { 
-      name: 'Apple Watch Series 9', 
-      category: 'Electronics', 
-      manufacturer: 'Apple Inc.', 
-      nafdac: 'B1-4024-XP',
-      image: 'https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/MKU83_VW_34FR+watch-49-titanium-ultra2_VW_34FR_WF_CO?wid=1400&hei=1400&fmt=jpeg&qlt=95&.v=1694507915513'
-    },
-    { 
-      name: 'Lagos Pharma Malaria Tablets', 
-      category: 'Pharmaceuticals', 
-      manufacturer: 'Lagos Pharma Ltd.', 
-      nafdac: 'B1-4025-XP',
-      image: 'https://5.imimg.com/data5/SELLER/Default/2022/7/NL/MY/HY/1853310/malaria-tablets-500x500.jpg'
-    },
-    { 
-      name: 'Dano Milk 1L', 
-      category: 'Dairy', 
-      manufacturer: 'Dano Foods', 
-      nafdac: 'B1-4026-XP',
-      image: 'https://www.danone.com/content/dam/danone-corp/danone-com/products/2022/danone-dairy-dano-milk-1l.png'
-    },
-    { 
-      name: 'Indomie Noodles', 
-      category: 'Food', 
-      manufacturer: 'Dufil Prima Foods', 
-      nafdac: 'B1-4027-XP',
-      image: 'https://www.indomie.com/wp-content/uploads/2021/03/indomie-chicken-1.png'
-    },
-    { 
-      name: 'Coca-Cola 50cl', 
-      category: 'Beverages', 
-      manufacturer: 'Nigerian Bottling Company', 
-      nafdac: 'B1-4028-XP',
-      image: 'https://www.coca-cola.com/content/dam/one-content/ng/en/products/coca-cola-original.png'
-    },
-    { 
-      name: 'Peak Milk Powder', 
-      category: 'Dairy', 
-      manufacturer: 'FrieslandCampina', 
-      nafdac: 'B1-4029-XP',
-      image: 'https://www.frieslandcampina.com.ng/wp-content/uploads/sites/7/2020/09/peak-1.png'
-    }
-  ];
-  
-  const randomProduct = products[Math.floor(Math.random() * products.length)];
-  const randomHour = Math.floor(Math.random() * 12) + 1;
-  const randomMinute = Math.floor(Math.random() * 60);
-  const ampm = Math.random() > 0.5 ? 'AM' : 'PM';
-  const timeString = `${randomHour}:${randomMinute.toString().padStart(2, '0')} ${ampm}`;
-  
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const randomDay = Math.random() > 0.3 ? 'Today' : Math.random() > 0.5 ? 'Yesterday' : days[Math.floor(Math.random() * 7)];
-  
-  return {
-    id: `scan_mock_${Date.now()}_${Math.random()}`,
-    product: randomProduct.name,
-    productImage: randomProduct.image,
-    category: randomProduct.category,
-    manufacturer: randomProduct.manufacturer,
-    nafdacNumber: randomProduct.nafdac,
-    status: isAuthentic ? 'authentic' : (Math.random() > 0.5 ? 'suspicious' : 'fake'),
-    time: randomDay === 'Today' ? `Today, ${timeString}` : randomDay === 'Yesterday' ? `Yesterday, ${timeString}` : `${randomDay}, ${timeString}`,
-    verified: isAuthentic ? true : Math.random() > 0.7,
-    similarity: isAuthentic ? Math.floor(Math.random() * 20) + 80 : Math.floor(Math.random() * 50) + 30,
-    batchNumber: `BATCH-${Math.floor(Math.random() * 1000)}`,
-    expiryDate: `2026-0${Math.floor(Math.random() * 9) + 1}`,
-    location: ['Lagos Market', 'Kano Central', 'Abuja Mall', 'Port Harcourt Plaza', 'Ibadan Store'][Math.floor(Math.random() * 5)],
-    timestamp: new Date().toISOString()
+// Force refresh on window focus (optional - for when user returns to app)
+export const setupAutoRefresh = () => {
+  const handleFocus = () => {
+    refreshNeeded = true;
   };
+  window.addEventListener('focus', handleFocus);
+  return () => window.removeEventListener('focus', handleFocus);
+};
+
+// Default export
+export default {
+  saveScan,
+  saveScanToHistory: saveScan,
+  getUserScanHistory,
+  getRecentScans,
+  getScanById,
+  deleteScan,
+  clearScanHistory,
+  getScanStats,
+  getProductImage,
+  generateScanId,
+  clearScansCache,
+  clearRecentScansCache,
+  markRefreshNeeded,
+  setupAutoRefresh
 };

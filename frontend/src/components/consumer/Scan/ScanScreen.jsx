@@ -1,31 +1,39 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import Icon from '../../common/Icon';
-import Card from '../../common/Card';
+import { X, Image, ArrowRight, Check, AlertCircle, CameraOff, Flashlight, RotateCcw } from 'lucide-react';
 import { scanApi } from '../../../services/api';
+// import { saveScan } from '../../../services/scanHistory';
+import useMediaPipeDetection from '../../../hooks/useMediaPipeDetection';
+import { saveScan, markRefreshNeeded } from '../../../services/scanHistory';
 
 const TOTAL_PHASES = 2;
 
 const scanPhases = [
   {
     id: 0,
-    name: 'Front Panel',
-    instruction: 'Scan the front of the product',
+    name: 'Front',
+    instruction: 'Front label',
     description: 'Position the front label clearly in frame',
     target: 'Product name, brand logo, NAFDAC number',
     icon: 'Square',
-    color: 'from-blue-500/20',
-    nextInstruction: 'Great! Now flip to the back panel',
+    nextInstruction: 'Great! Now flip to the back',
+    captureMessage: 'Front package captured!',
+    guideMessage: 'Scan the front part containing the brand logo and product name',
+    alignMessage: 'Align front packaging within the frame to scan',
+    continueButtonText: 'Continue to Scan Back package',
   },
   {
     id: 1,
-    name: 'Back Panel',
-    instruction: 'Scan the back of the product',
+    name: 'Back',
+    instruction: 'Back label',
     description: 'Show the NAFDAC number, batch code and manufacturer details',
     target: 'NAFDAC number, batch code, expiry date, manufacturer',
     icon: 'RotateCcw',
-    color: 'from-green-500/20',
     nextInstruction: 'Both sides captured! Sending to AI…',
+    captureMessage: 'Back package captured!',
+    guideMessage: 'Scan the back/side containing the NAFDAC number and batch code',
+    alignMessage: 'Align back/side packaging within the frame to scan',
+    continueButtonText: 'Submit to AI',
   },
 ];
 
@@ -35,6 +43,8 @@ const featuresByPhase = {
 };
 
 const emptyImages = { 0: null, 1: null };
+
+const detectProductCategory = () => 'unknown';
 
 const ScanScreen = () => {
   const navigate = useNavigate();
@@ -51,53 +61,362 @@ const ScanScreen = () => {
   const [detectedFeatures, setDetectedFeatures] = useState([]);
   const [showSuccess, setShowSuccess] = useState(false);
   const [showNextPrompt, setShowNextPrompt] = useState(false);
-  const [linePosition, setLinePosition] = useState(0);
-  const [scanDirection, setScanDirection] = useState('down');
-  const [progress, setProgress] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [uploadMode, setUploadMode] = useState(false);
   const [uploadSlots, setUploadSlots] = useState({ 0: null, 1: null });
+  const [torchOn, setTorchOn] = useState(false);
+  const [showGuidancePhase, setShowGuidancePhase] = useState(true);
+  const [waitingForContinue, setWaitingForContinue] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
+
+  // Product preview states
+  const [showProductPreview, setShowProductPreview] = useState(false);
+  const [capturedPreview, setCapturedPreview] = useState(null);
+  const [productCheckLoading, setProductCheckLoading] = useState(false);
+  const [productCheckError, setProductCheckError] = useState(null);
+  const [noProductDetected, setNoProductDetected] = useState(false);
+  const [currentCheckPhase, setCurrentCheckPhase] = useState(0);
+
+  // NEW: Success guide overlay state
+  const [showSuccessGuide, setShowSuccessGuide] = useState(false);
+
+  // Scanning line state
+  const [linePosition, setLinePosition] = useState(0);
+  const [scanDirection, setScanDirection] = useState('down');
+  const scanLineRef = useRef(null);
+  const captureTimerRef = useRef(null);
 
   // Refs
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const canvasRef = useRef(null);
   const fileInputRef = useRef(null);
-  const uploadSlotRef = useRef(0); // which slot the next file pick will fill
-  const scanIntervalRef = useRef(null);
-  const phaseRef = useRef(0);
-  const scanningRef = useRef(false);
+  const uploadSlotRef = useRef(0);
   const capturedImagesRef = useRef({ ...emptyImages });
   const geoRef = useRef({ latitude: 0, longitude: 0, address: '' });
+  const guidanceTimerRef = useRef(null);
+  const alignTimerRef = useRef(null);
+  const pendingCaptureRef = useRef(null);
 
-  // ── Camera ──────────────────────────────────────────────────────────────────
+  // MediaPipe Detection Hook
+  const {
+    isProductDetected,
+    detectionConfidence,
+    detectionState,
+    getDetailedFeedback,
+    isModelLoading,
+    resetTrigger
+  } = useMediaPipeDetection(
+    videoRef, 
+    cameraActive && !scanning && !submitting && !showNextPrompt && !waitingForContinue && !showProductPreview && !showSuccessGuide,
+    null
+  );
 
+  const detectionFeedback = getDetailedFeedback();
+
+  // ── Error Messages ─────────────────────────────────────────────────────────
+  const getUserFriendlyErrorMessage = (error) => {
+    const message = error?.message?.toLowerCase() || '';
+    const status = error?.status;
+    if (!navigator.onLine || message.includes('network') || message.includes('fetch') || message.includes('failed to fetch')) return 'No internet connection. Please check your network and try again.';
+    if (message.includes('timeout') || message.includes('timed out')) return 'Request timed out. Please check your connection and try again.';
+    if (status === 500 || message.includes('internal server error')) return 'Our servers are experiencing issues. Please try again in a few minutes.';
+    if (status === 503 || message.includes('unavailable')) return 'Service temporarily unavailable. Please try again later.';
+    if (status === 429 || message.includes('too many')) return 'Too many scan requests. Please wait a moment before trying again.';
+    if (message.includes('blurry') || message.includes('unclear') || message.includes('quality')) return 'The image is unclear. Please ensure the product is well-lit and the label is readable.';
+    if (message.includes('nafdac') && (message.includes('not found') || message.includes('missing'))) return 'The NAFDAC number was not found. Please ensure the back/side label is clearly visible.';
+    if (status === 401 || message.includes('unauthorized') || message.includes('token')) return 'Your session has expired. Please log in again to continue.';
+    return 'Unable to analyze the product. Please try again with a clearer image.';
+  };
+
+  // ── Guidance Message Management ───────────────────────────────────────────
+  const startGuidance = useCallback((phaseIndex) => {
+    if (guidanceTimerRef.current) clearTimeout(guidanceTimerRef.current);
+    if (alignTimerRef.current) clearTimeout(alignTimerRef.current);
+    
+    setShowGuidancePhase(true);
+    
+    alignTimerRef.current = setTimeout(() => {
+      setShowGuidancePhase(false);
+    }, 5000);
+  }, []);
+
+  const clearGuidance = useCallback(() => {
+    if (guidanceTimerRef.current) clearTimeout(guidanceTimerRef.current);
+    if (alignTimerRef.current) clearTimeout(alignTimerRef.current);
+    setShowGuidancePhase(true);
+  }, []);
+
+  // ── Submit to AI ───────────────────────────────────────────────────────────
+  const submitToAI = useCallback(async (images) => {
+    setSubmitting(true);
+    setSubmitError(null);
+    const primaryImage = images[0];
+    const backImage = images[1] || null;
+    if (!primaryImage) { setSubmitError('No image captured. Please try again.'); setSubmitting(false); return; }
+    const detectedCategory = detectProductCategory(primaryImage);
+    const geo = geoRef.current;
+    try {
+      const payload = {
+        image_data: primaryImage,
+        back_image_data: backImage,
+        category: detectedCategory,
+        purchase_channel: 'unknown',
+        latitude: geo.latitude,
+        longitude: geo.longitude,
+        location_text: geo.address || '',
+      };
+      const response = await scanApi.submitScan(payload);
+      const data = response.data || {};
+      const verdict = data.verdict || data.final_verdict || 'FAKE';
+      
+      // Use backend's display_confidence and confidence_label
+      const displayConfidence = data.display_confidence || (data.confidence_score ? Math.round(data.confidence_score * 100) : null);
+      const confidenceLabel = data.confidence_label || 'AI Confidence Score';
+      
+      const scanRecord = {
+        id: data.scan_id || `scan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        product: data.product_name || 'Verified Product',
+        productImage: primaryImage,
+        status: verdict.toLowerCase(),
+        category: detectedCategory,
+        location: geo.address || '',
+        latitude: geo.latitude,
+        longitude: geo.longitude,
+        similarity: displayConfidence,
+        timestamp: Date.now(),
+        date: new Date().toISOString(),
+        details: data
+      };
+      
+      await saveScan(scanRecord);
+      markRefreshNeeded();
+      
+      sessionStorage.setItem('currentScan', JSON.stringify({
+        productImage: primaryImage,
+        backImage,
+        imageUrl: data.image_url || null,
+        isAuthentic: verdict === 'AUTHENTIC',
+        isSuspicious: verdict === 'SUSPICIOUS',
+        isRescanRequired: verdict === 'RESCAN_REQUIRED',
+        aiResult: data,
+        location: geo.address || '',
+        latitude: geo.latitude,
+        longitude: geo.longitude,
+        category: detectedCategory,
+        scan_id: scanRecord.id,
+        displayConfidence: displayConfidence,
+        confidenceLabel: confidenceLabel,
+        simpleInstruction: data.simple_instruction || ''
+      }));
+      
+      if (verdict === 'AUTHENTIC') {
+        navigate('/scan/safe');
+      } else if (verdict === 'SUSPICIOUS') {
+        navigate('/scan/suspicious');
+      } else if (verdict === 'RESCAN_REQUIRED') {
+        navigate('/scan/rescan');
+      } else {
+        navigate('/scan/fake');
+      }
+    } catch (err) {
+      setSubmitError(getUserFriendlyErrorMessage(err));
+      setSubmitting(false);
+      setScanning(false);
+    }
+  }, [navigate]);
+
+  // ── Backend Product Detection ─────────────────────────────────────────────
+  const checkProductExists = useCallback(async (imageDataUrl, phase) => {
+    setProductCheckLoading(true);
+    setProductCheckError(null);
+    try {
+      const base64Data = imageDataUrl.split(',')[1] || imageDataUrl;
+      
+      const response = await scanApi.detectProduct({ 
+        image_data: base64Data,
+        phase: phase
+      });
+      
+      return { hasProduct: response.has_product, confidence: response.confidence };
+    } catch (err) {
+      console.error('Product detection error:', err);
+      setProductCheckError(err?.response?.data?.message || 'Detection failed. Please retake.');
+      return { hasProduct: false, confidence: 0 };
+    } finally {
+      setProductCheckLoading(false);
+    }
+  }, []);
+
+  // ── Capture ────────────────────────────────────────────────────────────────
+  const captureImage = useCallback((phaseIndex) => {
+    if (!videoRef.current || !canvasRef.current) return null;
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    capturedImagesRef.current = { ...capturedImagesRef.current, [phaseIndex]: dataUrl };
+    return dataUrl;
+  }, []);
+
+  // ── Re-attach stream to video element ────────────────────────────────────
+  const reAttachStream = useCallback(() => {
+    if (streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, []);
+
+  // ── Handle capture completion with product check ──────────────────────────
+  const handleCaptureComplete = useCallback(async (phaseIndex, imageDataUrl) => {
+    pendingCaptureRef.current = imageDataUrl;
+    setCurrentCheckPhase(phaseIndex);
+    const { hasProduct, confidence } = await checkProductExists(imageDataUrl, phaseIndex === 0 ? 'front' : 'back');
+    
+    if (hasProduct) {
+      setCapturedPreview(imageDataUrl);
+      setShowProductPreview(true);
+      setNoProductDetected(false);
+    } else {
+      setNoProductDetected(true);
+      setShowProductPreview(true);
+      setCapturedPreview(imageDataUrl);
+    }
+  }, [checkProductExists]);
+
+  // ── Keep image and proceed ────────────────────────────────────────────────
+  const handleKeepImage = useCallback(() => {
+    const phaseIndex = currentCheckPhase;
+    setCompletedPhases((prev) => [...prev, phaseIndex]);
+    setDetectedFeatures((prev) => [...prev, ...(featuresByPhase[phaseIndex] || [])]);
+    setShowSuccess(true);
+    setScanning(false);
+    setShowProductPreview(false);
+    setCapturedPreview(null);
+    setNoProductDetected(false);
+    pendingCaptureRef.current = null;
+
+    // Re-attach stream so the video element (which stayed mounted) resumes feed
+    reAttachStream();
+    
+    if (scanLineRef.current) { clearInterval(scanLineRef.current); scanLineRef.current = null; }
+    if (captureTimerRef.current) { clearTimeout(captureTimerRef.current); captureTimerRef.current = null; }
+    
+    setTimeout(() => {
+      setShowSuccess(false);
+      
+      if (phaseIndex === 0) {
+        // Show success guide overlay before moving to back panel
+        setShowSuccessGuide(true);
+      } else if (phaseIndex === 1) {
+        // Submit to AI
+        submitToAI(capturedImagesRef.current);
+      }
+    }, 800);
+  }, [currentCheckPhase, submitToAI, reAttachStream]);
+
+  // ── Proceed to back panel after success guide ─────────────────────────────
+  const proceedToBackPanel = useCallback(() => {
+    setShowSuccessGuide(false);
+    setCurrentPhase(1);
+    setShowNextPrompt(false);
+    setWaitingForContinue(false);
+    // Reset guidance for back panel
+    setTimeout(() => {
+      startGuidance(1);
+      resetTrigger();
+    }, 100);
+  }, [resetTrigger, startGuidance]);
+
+  // ── Retake image - restart camera for current phase ───────────────────────
+  const handleRetakeImage = useCallback(() => {
+    setShowProductPreview(false);
+    setCapturedPreview(null);
+    setNoProductDetected(false);
+    setProductCheckError(null);
+    pendingCaptureRef.current = null;
+    setScanning(false);
+
+    // Re-attach stream to the video element (it stays mounted) so feed resumes
+    reAttachStream();
+
+    setTimeout(() => {
+      startGuidance(currentPhase);
+      resetTrigger();
+    }, 150);
+  }, [currentPhase, resetTrigger, startGuidance, reAttachStream]);
+
+  // ── Start scanning animation ───────────────────────────────────────────────
+  const stopScan = useCallback(() => {
+    if (scanLineRef.current) { clearInterval(scanLineRef.current); scanLineRef.current = null; }
+    if (captureTimerRef.current) { clearTimeout(captureTimerRef.current); captureTimerRef.current = null; }
+    setLinePosition(0);
+    setScanDirection('down');
+    setScanProgress(0);
+    setScanning(false);
+  }, []);
+
+  const startScan = useCallback(() => {
+    if (!cameraActive) { setCameraError('Please enable camera access to start scanning.'); return; }
+    if (!detectionState.hasObject) { 
+      setSubmitError('Please position a product in the frame before scanning.');
+      return;
+    }
+    
+    setScanning(true);
+    setShowNextPrompt(false);
+    setWaitingForContinue(false);
+    setScanProgress(0);
+    clearGuidance();
+    
+    if (scanLineRef.current) clearInterval(scanLineRef.current);
+    let pos = 0;
+    let dir = 'down';
+    setScanDirection('down');
+    
+    scanLineRef.current = setInterval(() => {
+      if (dir === 'down') {
+        pos = Math.min(pos + 2, 100);
+        setScanProgress(pos);
+        if (pos >= 100) {
+          dir = 'up';
+          setScanDirection('up');
+        }
+      } else {
+        pos = Math.max(pos - 2, 0);
+        setScanProgress(pos);
+        if (pos <= 0) {
+          clearInterval(scanLineRef.current);
+          scanLineRef.current = null;
+          const imageData = captureImage(currentPhase);
+          handleCaptureComplete(currentPhase, imageData);
+        }
+      }
+      setLinePosition(pos);
+    }, 25);
+  }, [cameraActive, detectionState.hasObject, currentPhase, captureImage, handleCaptureComplete, clearGuidance]);
+
+  // ── Camera ─────────────────────────────────────────────────────────────────
   const startCamera = useCallback(async () => {
     setCameraPermission('requesting');
     setCameraError(null);
-
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraPermission('unsupported');
       setCameraError('Your browser does not support camera access.');
       return;
     }
-
     try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
-
+      if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false,
       });
-
       streamRef.current = stream;
       const video = videoRef.current;
       if (!video) { stream.getTracks().forEach((t) => t.stop()); return; }
-
       video.srcObject = stream;
       await new Promise((resolve, reject) => { video.onloadedmetadata = resolve; video.onerror = reject; });
       await video.play();
@@ -119,191 +438,77 @@ const ScanScreen = () => {
     }
   }, []);
 
+  const toggleTorch = useCallback(async () => {
+    if (!streamRef.current) return;
+    const track = streamRef.current.getVideoTracks()[0];
+    if (!track) return;
+    const newState = !torchOn;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: newState }] });
+      setTorchOn(newState);
+    } catch (e) {
+      console.warn('Torch not supported on this device');
+    }
+  }, [torchOn]);
+
+  // Initialize camera
   useEffect(() => {
     startCamera();
-
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const lat = pos.coords.latitude;
           const lng = pos.coords.longitude;
-          geoRef.current = {
-            latitude: lat,
-            longitude: lng,
-            address: `${lat.toFixed(5)}° N, ${lng.toFixed(5)}° E`,
-          };
+          geoRef.current = { latitude: lat, longitude: lng, address: `${lat.toFixed(5)}° N, ${lng.toFixed(5)}° E` };
         },
         () => {},
         { enableHighAccuracy: true, timeout: 10000 },
       );
     }
-
     return () => {
-      stopAllScan();
+      stopScan();
+      clearGuidance();
       if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
     };
   }, []);
 
-  // ── Capture ─────────────────────────────────────────────────────────────────
-
-  const captureImage = useCallback((phaseIndex) => {
-    if (!videoRef.current || !canvasRef.current) return null;
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-    capturedImagesRef.current = { ...capturedImagesRef.current, [phaseIndex]: dataUrl };
-    return dataUrl;
-  }, []);
-
-  // ── AI submission ────────────────────────────────────────────────────────────
-
-  const submitToAI = useCallback(async (images) => {
-    setSubmitting(true);
-    setSubmitError(null);
-
-    const primaryImage = images[0];  // front panel
-    const backImage    = images[1] || null;  // back panel
-
-    if (!primaryImage) {
-      setSubmitError('No image captured. Please try again.');
-      setSubmitting(false);
-      return;
+  // Start guidance when camera is active and not scanning
+  useEffect(() => {
+    if (cameraActive && !scanning && !submitting && !showNextPrompt && !waitingForContinue && !showProductPreview && !showSuccessGuide) {
+      startGuidance(currentPhase);
+    } else {
+      clearGuidance();
     }
+    return () => clearGuidance();
+  }, [cameraActive, scanning, submitting, showNextPrompt, waitingForContinue, showProductPreview, showSuccessGuide, currentPhase, startGuidance, clearGuidance]);
 
-    const geo = geoRef.current;
-
-    try {
-      const payload = {
-        image_data:       primaryImage,
-        back_image_data:  backImage,
-        category:         'unknown',
-        purchase_channel: 'unknown',
-        latitude:         geo.latitude,
-        longitude:        geo.longitude,
-        location_text:    geo.address || '',
-      };
-
-      const response = await scanApi.submitScan(payload);
-
-      const data    = response.data || {};
-      const verdict = data.verdict || data.final_verdict || 'FAKE';
-
-      sessionStorage.setItem('currentScan', JSON.stringify({
-        productImage:     primaryImage,
-        imageUrl:         data.image_url || null,
-        isAuthentic:      verdict === 'AUTHENTIC',
-        isSuspicious:     verdict === 'SUSPICIOUS',
-        isRescanRequired: verdict === 'RESCAN_REQUIRED',
-        aiResult:         data,
-        location:         geo.address || '',
-        latitude:         geo.latitude,
-        longitude:        geo.longitude,
-      }));
-
-      if (verdict === 'AUTHENTIC' || verdict === 'SUSPICIOUS') {
-        navigate('/scan/safe');
-      } else if (verdict === 'RESCAN_REQUIRED') {
-        navigate('/scan/rescan');
-      } else {
-        navigate('/scan/fake');
-      }
-    } catch (err) {
-      setSubmitError(`Analysis failed: ${err.message}. Please try again.`);
-      setSubmitting(false);
-      setScanning(false);
-      scanningRef.current = false;
-    }
-  }, [navigate]);
-
-  // ── Scan phases ──────────────────────────────────────────────────────────────
-
-  const stopAllScan = () => {
-    if (scanIntervalRef.current) { clearInterval(scanIntervalRef.current); scanIntervalRef.current = null; }
-    scanningRef.current = false;
-  };
-
-  const runPhase = useCallback((phaseIndex) => {
-    phaseRef.current = phaseIndex;
-    setCurrentPhase(phaseIndex);
-    setProgress(0);
-    setLinePosition(0);
-    setScanDirection('down');
-    setShowNextPrompt(false);
-
-    let progressValue = 0;
-    let direction = 'down';
-
-    if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
-
-    scanIntervalRef.current = setInterval(() => {
-      if (!scanningRef.current) { clearInterval(scanIntervalRef.current); return; }
-
-      progressValue = Math.min(progressValue + 2, 100);
-      setProgress(progressValue);
-
-      if (direction === 'down') {
-        setLinePosition(Math.min((progressValue / 50) * 100, 100));
-        if (progressValue >= 50) { direction = 'up'; setScanDirection('up'); }
-      } else {
-        setLinePosition(Math.max(100 - ((progressValue - 50) / 50) * 100, 0));
-      }
-
-      if (progressValue >= 100) {
-        clearInterval(scanIntervalRef.current);
-        scanIntervalRef.current = null;
-
-        captureImage(phaseIndex);
-        setCompletedPhases((prev) => [...prev, phaseIndex]);
-        setDetectedFeatures((prev) => [...prev, ...(featuresByPhase[phaseIndex] || [])]);
-        setShowSuccess(true);
-
-        setTimeout(() => {
-          setShowSuccess(false);
-          if (phaseIndex < TOTAL_PHASES - 1) {
-            setShowNextPrompt(true);
-          } else {
-            // Last phase — submit all 4 images to AI
-            setShowNextPrompt(true);
-            setTimeout(() => {
-              setScanning(false);
-              scanningRef.current = false;
-              submitToAI(capturedImagesRef.current);
-            }, 1500);
-          }
-        }, 1500);
-      }
-    }, 40);
-  }, [captureImage, submitToAI]);
-
-  const startScanning = useCallback(() => {
-    if (!cameraActive) { setCameraError('Please enable camera access to start scanning.'); return; }
-    stopAllScan();
-    setScanning(true);
-    scanningRef.current = true;
-    setCompletedPhases([]);
-    setDetectedFeatures([]);
-    capturedImagesRef.current = { ...emptyImages };
-    setSubmitError(null);
-    runPhase(0);
-  }, [cameraActive, runPhase]);
-
+  // ── Scan Controls ──────────────────────────────────────────────────────────
   const resetScan = useCallback(() => {
-    stopAllScan();
+    stopScan();
+    clearGuidance();
     setScanning(false);
     setCurrentPhase(0);
     setCompletedPhases([]);
     setDetectedFeatures([]);
-    setProgress(0);
-    setLinePosition(0);
-    setScanDirection('down');
     setShowSuccess(false);
     setShowNextPrompt(false);
+    setWaitingForContinue(false);
     setSubmitting(false);
     setSubmitError(null);
-  }, []);
+    setShowProductPreview(false);
+    setShowSuccessGuide(false);
+    setCapturedPreview(null);
+    setNoProductDetected(false);
+    setProductCheckError(null);
+    setLinePosition(0);
+    setScanDirection('down');
+    setScanProgress(0);
+    capturedImagesRef.current = { ...emptyImages };
+    if (cameraActive) {
+      startGuidance(0);
+    }
+    resetTrigger();
+  }, [stopScan, clearGuidance, cameraActive, startGuidance, resetTrigger]);
 
   const handleFileUpload = useCallback((e) => {
     const file = e.target.files?.[0];
@@ -312,490 +517,541 @@ const ScanScreen = () => {
     setSubmitError(null);
     const slot = uploadSlotRef.current;
     const reader = new FileReader();
-    reader.onload = () => {
-      setUploadSlots(prev => ({ ...prev, [slot]: reader.result }));
-    };
+    reader.onload = () => { setUploadSlots(prev => ({ ...prev, [slot]: reader.result })); };
     reader.readAsDataURL(file);
   }, []);
 
   const handleSubmitUploads = useCallback(() => {
-    if (!uploadSlots[0] || !uploadSlots[1]) {
-      setSubmitError('Please select both the front and back panel images before analysing.');
-      return;
-    }
+    if (!uploadSlots[0] || !uploadSlots[1]) { setSubmitError('Please select both the front and back panel images before analysing.'); return; }
     const slots = { ...uploadSlots };
     setUploadSlots({ 0: null, 1: null });
     setUploadMode(false);
     submitToAI(slots);
   }, [uploadSlots, submitToAI]);
 
+  const continueToNextPhase = useCallback(() => {
+    setShowNextPrompt(false);
+    setWaitingForContinue(false);
+    const nextPhase = currentPhase + 1;
+    setCurrentPhase(nextPhase);
+    startGuidance(nextPhase);
+    resetTrigger();
+  }, [currentPhase, startGuidance, resetTrigger]);
+
   const openSlotPicker = useCallback((slotIndex) => {
     uploadSlotRef.current = slotIndex;
     fileInputRef.current?.click();
   }, []);
 
-  const continueToNextPhase = useCallback(() => {
-    setShowNextPrompt(false);
-    if (currentPhase < TOTAL_PHASES - 1) runPhase(currentPhase + 1);
-  }, [currentPhase, runPhase]);
-
   const currentPhaseData = scanPhases[currentPhase] ?? scanPhases[0];
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  const canStartScan = cameraActive && detectionState.hasObject && !scanning && !submitting && !showNextPrompt && !waitingForContinue && !isModelLoading && !showProductPreview && !showSuccessGuide;
 
-  return (
-    <div className="min-h-screen bg-black">
-      {/* Camera Viewport */}
-      <div className="relative h-[70vh] bg-gray-900 overflow-hidden">
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          style={{ display: cameraActive ? 'block' : 'none' }}
-          className="absolute inset-0 w-full h-full object-cover"
-        />
+  const getGuidanceMessage = () => {
+    if (showGuidancePhase) {
+      return currentPhaseData.guideMessage;
+    }
+    return currentPhaseData.alignMessage;
+  };
+
+  const getHintMessage = () => {
+    if (submitError) return submitError;
+    if (submitting) return 'SabiLens AI is analysing…';
+    if (showProductPreview && productCheckLoading) return 'Checking for product...';
+    if (showProductPreview && noProductDetected) return 'No product detected. Please retake.';
+    if (showProductPreview && !noProductDetected) return 'Product detected. Keep or retake?';
+    if (showSuccessGuide) return 'Front package saved! Flip your product to scan the back.';
+    if (showNextPrompt && waitingForContinue) {
+      return `${currentPhaseData.captureMessage} ${currentPhaseData.nextInstruction}`;
+    }
+    if (scanning) {
+      if (scanDirection === 'down') {
+        return `Scanning ${currentPhaseData.name} package — moving down`;
+      }
+      return `Scanning ${currentPhaseData.name} package — moving up`;
+    }
+    if (!scanning && !showNextPrompt && !waitingForContinue) {
+      if (!detectionState.hasObject) {
+        return getGuidanceMessage();
+      }
+      if (detectionState.hasObject) {
+        return `✓ Product detected (${detectionState.confidence}%) — Tap scan`;
+      }
+      return detectionFeedback.message;
+    }
+    return getGuidanceMessage();
+  };
+
+  // ── Upload Mode ────────────────────────────────────────────────────────────
+  if (uploadMode) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col bg-black">
         <canvas ref={canvasRef} className="hidden" />
         <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
 
-        {/* Camera placeholder */}
-        {!cameraActive && (
-          <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-gray-900 to-gray-800">
-            {cameraPermission === 'idle' || cameraPermission === 'requesting' ? (
-              <div className="text-center text-white">
-                <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-                <p className="text-sm">Requesting camera access…</p>
-              </div>
-            ) : cameraPermission === 'unsupported' ? (
-              <div className="text-center text-white px-6">
-                <Icon name="AlertTriangle" size={64} className="mx-auto mb-4 text-yellow-500" library="fi" />
-                <p className="text-lg font-medium mb-2">Camera Not Supported</p>
-                <p className="text-sm text-gray-400">Use Chrome, Safari, or Firefox.</p>
-              </div>
-            ) : (
-              <div className="text-center text-white px-6">
-                <Icon name="CameraOff" size={64} className="mx-auto mb-4 text-gray-400" library="fi" />
-                <p className="text-lg font-medium mb-2">Camera Access Denied</p>
-                <p className="text-sm text-gray-400 mb-6">{cameraError}</p>
-                <button onClick={startCamera} className="px-6 py-3 bg-primary rounded-xl text-sm font-semibold hover:bg-primary-dark transition-colors">
-                  Retry
+        <div className="flex flex-col flex-1 px-5 pt-12 pb-6 overflow-y-auto">
+          <div className="flex items-center gap-3 mb-5">
+            <button
+              onClick={() => { setUploadMode(false); setUploadSlots({ 0: null, 1: null }); setSubmitError(null); }}
+              className="w-9 h-9 rounded-full flex items-center justify-center bg-white/10 border border-white/15 hover:bg-white/20 transition-colors"
+            >
+              <ArrowRight size={16} className="text-white rotate-180" />
+            </button>
+            <div>
+              <p className="text-white/40 text-[9px] tracking-widest uppercase">SabiLens AI</p>
+              <h2 className="text-white text-lg font-bold">Upload Images</h2>
+            </div>
+          </div>
+
+          <p className="text-white/50 text-xs mb-5 leading-relaxed">
+            Select the <span className="text-white font-semibold">front</span> and{' '}
+            <span className="text-white font-semibold">back/side</span> of the product.
+            <span className="block text-green-500 text-[10px] mt-1">NAFDAC number is usually on the back or side label.</span>
+          </p>
+
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            {[
+              { slot: 0, label: 'Front', hint: 'Brand · Logo · Name' },
+              { slot: 1, label: 'Back / Side', hint: 'NAFDAC · Batch · Expiry' },
+            ].map(({ slot, label, hint }) => (
+              <div key={slot} className="flex flex-col gap-1.5">
+                <p className="text-white/50 text-[9px] font-semibold tracking-widest uppercase">{label}</p>
+                <button
+                  onClick={() => openSlotPicker(slot)}
+                  className={`relative h-36 rounded-xl border-2 border-dashed flex flex-col items-center justify-center overflow-hidden transition-all
+                    ${uploadSlots[slot] ? 'border-green-500/60' : 'border-white/15 hover:border-green-500/40'}`}
+                >
+                  {uploadSlots[slot] ? (
+                    <>
+                      <img src={uploadSlots[slot]} alt={label} className="absolute inset-0 w-full h-full object-cover rounded-xl" />
+                      <div className="absolute inset-0 bg-black/50 rounded-xl flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                        <span className="text-white text-xs font-medium">Change</span>
+                      </div>
+                      <div className="absolute top-2 right-2 w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+                        <Check size={10} className="text-white" />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <Image size={24} className="text-white/20 mb-1" />
+                      <span className="text-white/30 text-[10px] text-center px-2">{hint}</span>
+                      <span className="text-green-500 text-[10px] font-semibold mt-1">Tap to select</span>
+                    </>
+                  )}
                 </button>
               </div>
-            )}
+            ))}
           </div>
-        )}
 
-        {/* Scanning overlay */}
-        {cameraActive && (
-          <div className="absolute inset-0">
-            <div className="absolute inset-0 bg-black/20" />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="relative">
-                {/* Phase badge */}
-                <div className="absolute -top-16 left-1/2 -translate-x-1/2 bg-black/90 backdrop-blur px-4 py-2 rounded-full border border-primary/30 shadow-lg z-10 whitespace-nowrap">
-                  <span className="text-white text-sm font-medium flex items-center gap-2">
-                    <Icon name={currentPhaseData.icon} size={16} className="text-primary" library="fi" />
-                    Phase {currentPhase + 1}/{TOTAL_PHASES}: {currentPhaseData.name}
-                  </span>
-                </div>
-
-                {/* Frame */}
-                <div className="relative w-80 h-80">
-                  <div className={`absolute inset-0 bg-gradient-to-br ${currentPhaseData.color} to-transparent rounded-2xl blur-xl`} />
-                  <div className="absolute inset-0 border-2 border-primary/30 rounded-2xl" />
-                  <div className="absolute inset-4 border border-primary/20 rounded-lg">
-                    <div className="absolute -top-1 -left-1 w-8 h-8 border-t-4 border-l-4 border-primary rounded-tl-lg" />
-                    <div className="absolute -top-1 -right-1 w-8 h-8 border-t-4 border-r-4 border-primary rounded-tr-lg" />
-                    <div className="absolute -bottom-1 -left-1 w-8 h-8 border-b-4 border-l-4 border-primary rounded-bl-lg" />
-                    <div className="absolute -bottom-1 -right-1 w-8 h-8 border-b-4 border-r-4 border-primary rounded-br-lg" />
-                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
-                      <div className="w-16 h-16 border-2 border-primary/40 rounded-full" />
-                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-primary rounded-full" />
-                    </div>
-
-                    {scanning && !showNextPrompt && !submitting && (
-                      <>
-                        <div className="absolute left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-primary to-transparent" style={{ top: `${linePosition}%`, boxShadow: '0 0 20px #A020F0', transition: 'top 40ms linear' }} />
-                        <div className="absolute left-0 right-0 h-12 bg-gradient-to-b from-primary/20 to-transparent pointer-events-none" style={{ top: `${linePosition - 6}%`, filter: 'blur(8px)', transition: 'top 40ms linear' }} />
-                      </>
-                    )}
-
-                    {/* Next Phase Prompt */}
-                    {showNextPrompt && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm rounded-2xl z-30 animate-fadeIn">
-                        <div className="text-center px-6">
-                          {submitting ? (
-                            <>
-                              <div className="w-20 h-20 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-                              <h3 className="text-white text-xl font-bold mb-2">Analysing…</h3>
-                              <p className="text-gray-300 text-base">SabiLens AI is verifying your product</p>
-                            </>
-                          ) : (
-                            <>
-                              <div className="w-20 h-20 bg-primary/20 rounded-full flex items-center justify-center mx-auto mb-4 border-4 border-primary">
-                                <Icon name="ArrowRight" size={40} className="text-primary" library="fi" />
-                              </div>
-                              <h3 className="text-white text-xl font-bold mb-2">Phase {currentPhase + 1} Complete!</h3>
-                              <p className="text-gray-300 text-base mb-6">{currentPhaseData.nextInstruction}</p>
-                              {currentPhase < TOTAL_PHASES - 1 ? (
-                                <button onClick={continueToNextPhase} className="bg-primary text-white px-8 py-4 rounded-xl font-semibold text-lg hover:bg-primary-dark transition-colors shadow-lg shadow-primary/30 w-full">
-                                  Continue to Phase {currentPhase + 2}
-                                </button>
-                              ) : (
-                                <div className="text-center">
-                                  <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-                                  <p className="text-white">Sending to AI…</p>
-                                </div>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {scanning && !showNextPrompt && (
-                    <div className="absolute -right-14 top-1/2 -translate-y-1/2 bg-black/80 backdrop-blur px-3 py-2 rounded-full border border-primary/30">
-                      <Icon name={scanDirection === 'down' ? 'ArrowDown' : 'ArrowUp'} size={20} className="text-primary animate-bounce" library="fi" />
-                    </div>
-                  )}
-                  {scanning && !showNextPrompt && (
-                    <div className="absolute -bottom-12 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur px-4 py-2 rounded-full border border-primary/30">
-                      <span className="text-white text-sm font-mono">{Math.round(progress)}% Complete</span>
-                    </div>
-                  )}
-                </div>
-
-                {!showNextPrompt && (
-                  <div className="absolute -bottom-32 left-1/2 -translate-x-1/2 w-72 text-center">
-                    <p className="text-white text-base font-medium mb-1 drop-shadow-lg">{currentPhaseData.instruction}</p>
-                    <p className="text-gray-300 text-xs">{currentPhaseData.description}</p>
-                  </div>
-                )}
-              </div>
+          {submitError && (
+            <div className="mb-4 p-2.5 rounded-xl flex items-center gap-2 bg-red-500/10 border border-red-500/30">
+              <AlertCircle size={14} className="text-red-400 shrink-0" />
+              <p className="text-[11px] text-red-300">{submitError}</p>
             </div>
+          )}
 
-            {showSuccess && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-20 animate-fadeIn">
-                <div className="bg-primary rounded-full p-6 animate-bounce">
-                  <Icon name="Check" size={64} className="text-white" library="fi" />
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Top HUD */}
-        <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/80 to-transparent z-10">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full animate-pulse ${cameraActive ? 'bg-green-500' : 'bg-yellow-500'}`} />
-              <span className="text-white text-sm font-medium">
-                {submitting ? 'SABILENS AI ANALYSING…' : cameraActive ? 'SABILENS AI ACTIVE' : 'INITIALIZING CAMERA…'}
-              </span>
-            </div>
-            {/* Phase dots — one per phase */}
-            <div className="flex items-center gap-1">
-              {scanPhases.map((phase, index) => (
-                <div
-                  key={phase.id}
-                  className={`w-2 h-2 rounded-full transition-all duration-300 ${
-                    completedPhases.includes(index)
-                      ? 'bg-primary scale-125'
-                      : index === currentPhase && scanning && !showNextPrompt
-                      ? 'bg-primary/70 animate-pulse'
-                      : 'bg-white/30'
-                  }`}
-                />
-              ))}
-            </div>
-          </div>
+          <button
+            onClick={handleSubmitUploads}
+            disabled={!uploadSlots[0] || !uploadSlots[1]}
+            className={`w-full py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all text-sm
+              ${uploadSlots[0] && uploadSlots[1] ? 'bg-green-500 text-white' : 'bg-white/10 text-white/30 cursor-not-allowed'}`}
+          >
+            <Flashlight size={16} />
+            {uploadSlots[0] && uploadSlots[1] ? 'Analyse Both Images' : `Select ${!uploadSlots[0] ? 'Front' : 'Back'} Package`}
+          </button>
         </div>
+      </div>
+    );
+  }
 
-        {/* Bottom camera controls */}
-        <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent z-10">
-          <div className="flex justify-between items-end">
-            {/* Upload from gallery */}
-            {!scanning && !submitting ? (
-              <button
-                onClick={() => { setUploadMode(true); setUploadSlots({ 0: null, 1: null }); setSubmitError(null); }}
-                className="flex flex-col items-center gap-2 group"
-              >
-                <div className="w-14 h-14 bg-white/10 backdrop-blur rounded-full flex items-center justify-center group-hover:bg-white/20 transition-all group-hover:scale-110 border border-white/20">
-                  <Icon name="Image" size={22} className="text-white" library="fi" />
-                </div>
-                <span className="text-white text-xs font-medium">Upload</span>
-              </button>
-            ) : (
-              <div className="w-14" />
+  // ── MAIN UI ────────────────────────────────────────────────────────────────
+  // NOTE: showProductPreview and showSuccessGuide are rendered as absolute overlays
+  // on top of the main UI. This keeps <video ref={videoRef}> always mounted.
+  return (
+    <div className="fixed inset-0 flex flex-col bg-black">
+      <canvas ref={canvasRef} className="hidden" />
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+
+      {/* ── PRODUCT PREVIEW OVERLAY (absolute, keeps video mounted below) ── */}
+      {showProductPreview && (
+        <div className="absolute inset-0 z-50 flex flex-col bg-black items-center justify-center px-5">
+          <div className="relative w-full max-w-[320px] rounded-2xl overflow-hidden mb-6" style={{ aspectRatio: '3/4' }}>
+            {capturedPreview && (
+              <img src={capturedPreview} alt="Captured product" className="w-full h-full object-cover" />
             )}
-
-            {!scanning ? (
-              <button
-                onClick={startScanning}
-                disabled={!cameraActive || submitting}
-                className={`flex flex-col items-center gap-2 group ${(!cameraActive || submitting) && 'opacity-50 cursor-not-allowed'}`}
-              >
-                <div className={`w-20 h-20 rounded-full flex items-center justify-center transition-all group-hover:scale-110 ${cameraActive ? 'bg-primary shadow-lg shadow-primary/50' : 'bg-gray-600'}`}>
-                  <Icon name="Camera" size={32} className="text-white" library="fi" />
+            {productCheckLoading && (
+              <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
+                <div className="text-center">
+                  <div className="w-10 h-10 border-2 border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                  <p className="text-white text-sm">Checking for product...</p>
                 </div>
-                <span className="text-white text-sm font-medium">{cameraActive ? 'Start Scan' : 'No Camera'}</span>
-              </button>
-            ) : (
-              <div className="flex flex-col items-center gap-2">
-                {submitting ? (
-                  <div className="w-20 h-20 bg-primary rounded-full flex items-center justify-center shadow-lg shadow-primary/50">
-                    <div className="w-10 h-10 border-4 border-white border-t-transparent rounded-full animate-spin" />
-                  </div>
-                ) : showNextPrompt ? (
-                  <div className="w-20 h-20 bg-primary rounded-full flex items-center justify-center shadow-lg shadow-primary/50 animate-pulse">
-                    <Icon name="ArrowRight" size={32} className="text-white" library="fi" />
-                  </div>
-                ) : (
-                  <div className="w-20 h-20 bg-primary rounded-full flex items-center justify-center shadow-lg shadow-primary/50">
-                    <span className="text-white text-xl font-bold">{Math.round(progress)}%</span>
-                  </div>
-                )}
-                <span className="text-white text-xs">
-                  {submitting ? 'AI Analysing…' : showNextPrompt ? 'Ready for next' : `Phase ${currentPhase + 1}/${TOTAL_PHASES}`}
-                </span>
               </div>
             )}
+          </div>
 
-            <button onClick={() => navigate('/scan-history')} className="flex flex-col items-center gap-2 group">
-              <div className="w-14 h-14 bg-white/10 backdrop-blur rounded-full flex items-center justify-center group-hover:bg-white/20 transition-all group-hover:scale-110 border border-white/20">
-                <Icon name="Clock" size={22} className="text-white" library="fi" />
-              </div>
-              <span className="text-white text-xs font-medium">Recent</span>
+          {!productCheckLoading && (
+            <div className="text-center w-full max-w-[320px]">
+              {noProductDetected ? (
+                <>
+                  <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
+                    <AlertCircle size={32} className="text-red-400" />
+                  </div>
+                  <h3 className="text-white text-lg font-bold mb-2">No Product Detected</h3>
+                  <p className="text-white/50 text-sm mb-6">
+                    {productCheckError || "We couldn't identify a product in this image. Please try again with better lighting and positioning."}
+                  </p>
+                  <button
+                    onClick={handleRetakeImage}
+                    className="w-full py-3 rounded-xl font-semibold bg-white/10 border border-white/20 text-white"
+                  >
+                    Retake
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-4">
+                    <Check size={32} className="text-green-400" />
+                  </div>
+                  <h3 className="text-white text-lg font-bold mb-2">Product Detected</h3>
+                  <p className="text-white/50 text-sm mb-6">
+                    Is this image clear? You can keep it or retake.
+                  </p>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleRetakeImage}
+                      className="flex-1 py-3 rounded-xl font-semibold bg-white/10 border border-white/20 text-white"
+                    >
+                      Retake
+                    </button>
+                    <button
+                      onClick={handleKeepImage}
+                      className="flex-1 py-3 rounded-xl font-semibold bg-green-500 text-white"
+                    >
+                      {currentCheckPhase === 0 ? 'Keep & Continue' : 'Submit Scan'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── SUCCESS GUIDE OVERLAY (after front panel keep) ── */}
+      {showSuccessGuide && (
+        <div className="absolute inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-md items-center justify-center px-5 animate-fadeIn">
+          <div className="text-center w-full max-w-[320px]">
+            <div className="w-20 h-20 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-6">
+              <Check size={48} className="text-green-400" />
+            </div>
+            <h3 className="text-white text-2xl font-bold mb-3">Front Package Saved!</h3>
+            <p className="text-white/60 text-base mb-8 leading-relaxed">
+              Great! Now flip your product and scan the back/side panel containing the NAFDAC number, batch code, and expiry date.
+            </p>
+            <div className="bg-white/5 rounded-2xl p-4 mb-8 border border-white/10">
+              <p className="text-white/80 text-sm">
+                <span className="text-green-400 font-semibold">Next step:</span> Scan the back panel
+              </p>
+            </div>
+            <button
+              onClick={proceedToBackPanel}
+              className="w-full py-4 rounded-xl font-semibold text-white bg-green-500 hover:bg-green-600 transition-colors text-base flex items-center justify-center gap-2"
+            >
+              Continue to Back Scan
+              <ArrowRight size={18} />
             </button>
           </div>
         </div>
+      )}
 
+      <div className="flex-none flex items-start justify-between px-4 pt-12 pb-2">
         <button
-          onClick={() => { stopAllScan(); navigate('/home'); }}
-          className="absolute top-4 left-4 z-20 w-10 h-10 bg-black/50 backdrop-blur rounded-full flex items-center justify-center hover:bg-black/70 transition-colors border border-white/20"
+          onClick={() => { resetScan(); navigate('/home'); }}
+          className="w-8 h-8 rounded-full flex items-center justify-center bg-white/10 border border-white/15 hover:bg-white/20 transition-colors"
         >
-          <Icon name="X" size={20} className="text-white" library="fi" />
+          <X size={14} className="text-white" />
         </button>
+
+        <div className="text-right">
+          <p className="text-white/40 text-[8px] tracking-widest uppercase">SabiLens AI</p>
+          <p className="text-white text-xs font-medium tracking-tight">
+            {submitting ? 'Analysing…' : scanning ? `${currentPhaseData.name} Package` : waitingForContinue ? 'Capture Complete' : 'Multimodal'}
+          </p>
+        </div>
       </div>
 
-      {/* Status Panel */}
-      <div className="bg-white p-6 rounded-t-3xl min-h-[30vh] relative z-20">
-        {submitError && !uploadMode && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3">
-            <Icon name="AlertCircle" size={20} className="text-red-500 shrink-0" library="fi" />
-            <p className="text-sm text-red-700">{submitError}</p>
-            <button onClick={resetScan} className="ml-auto text-xs text-red-500 underline">Reset</button>
-          </div>
-        )}
+      {isModelLoading && (
+        <div className="absolute top-20 right-4 z-20 bg-black/60 backdrop-blur rounded-full px-3 py-1">
+          <span className="text-white text-[10px] flex items-center gap-1">
+            <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+            Loading AI model...
+          </span>
+        </div>
+      )}
 
-        {submitting ? (
-          <div className="text-center py-8">
-            <div className="w-20 h-20 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-            <h2 className="text-xl font-bold text-gray-900 mb-2">SabiLens AI is working…</h2>
-            <p className="text-gray-500 text-sm">Running OCR, visual analysis, and NAFDAC verification on both images</p>
-          </div>
-        ) : uploadMode ? (
-          <>
-            <div className="flex items-center gap-3 mb-4">
-              <button onClick={() => { setUploadMode(false); setUploadSlots({ 0: null, 1: null }); setSubmitError(null); }}>
-                <Icon name="ArrowLeft" size={20} className="text-gray-500" library="fi" />
-              </button>
-              <h2 className="text-xl font-bold text-gray-900">Upload Product Images</h2>
-            </div>
-            <p className="text-sm text-gray-500 mb-5">
-              Select the <span className="font-medium text-gray-700">front panel</span> and <span className="font-medium text-gray-700">back panel</span> of the product. Both images are required.
-            </p>
+      <div className="flex-1 flex flex-col items-center justify-start px-3 pt-1">
+        <div className="relative w-full max-w-[360px] mx-auto">
+          <div className="relative w-full rounded-2xl overflow-hidden" style={{ aspectRatio: '3/4', maxHeight: '55vh', background: '#0a0a0a' }}>
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="absolute inset-0 w-full h-full object-cover"
+              style={{ display: cameraActive ? 'block' : 'none' }}
+            />
 
-            <div className="grid grid-cols-2 gap-4 mb-5">
-              {[
-                { slot: 0, label: 'Front Panel', hint: 'Brand, logo, NAFDAC no.' },
-                { slot: 1, label: 'Back Panel',  hint: 'Batch code, expiry, mfr.' },
-              ].map(({ slot, label, hint }) => (
-                <div key={slot} className="flex flex-col gap-2">
-                  <p className="text-xs font-semibold text-gray-600">{label}</p>
-                  <button
-                    onClick={() => openSlotPicker(slot)}
-                    className={`relative h-36 rounded-xl border-2 border-dashed flex flex-col items-center justify-center overflow-hidden transition-all
-                      ${uploadSlots[slot] ? 'border-primary/40 bg-primary/5' : 'border-gray-200 hover:border-primary/40 hover:bg-gray-50'}`}
-                  >
-                    {uploadSlots[slot] ? (
-                      <>
-                        <img src={uploadSlots[slot]} alt={label} className="absolute inset-0 w-full h-full object-cover rounded-xl" />
-                        <div className="absolute inset-0 bg-black/30 rounded-xl flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
-                          <span className="text-white text-xs font-medium">Change</span>
-                        </div>
-                        <div className="absolute top-2 right-2 w-6 h-6 bg-primary rounded-full flex items-center justify-center">
-                          <Icon name="Check" size={12} className="text-white" library="fi" />
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <Icon name="Image" size={28} className="text-gray-300 mb-2" library="fi" />
-                        <span className="text-xs text-gray-400 text-center px-2">{hint}</span>
-                        <span className="text-xs text-primary font-medium mt-1">Tap to select</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            {submitError && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2">
-                <Icon name="AlertCircle" size={16} className="text-red-500 shrink-0" library="fi" />
-                <p className="text-xs text-red-700">{submitError}</p>
-              </div>
-            )}
-
-            <button
-              onClick={handleSubmitUploads}
-              disabled={!uploadSlots[0] || !uploadSlots[1]}
-              className={`w-full py-4 rounded-xl font-medium flex items-center justify-center gap-2 transition-all
-                ${uploadSlots[0] && uploadSlots[1]
-                  ? 'bg-primary text-white shadow-lg shadow-primary/30 hover:bg-primary-dark'
-                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
-            >
-              <Icon name="Zap" size={18} library="fi" />
-              {uploadSlots[0] && uploadSlots[1] ? 'Analyse Both Images' : `Select ${!uploadSlots[0] ? 'Front' : 'Back'} Panel Image`}
-            </button>
-          </>
-        ) : !scanning ? (
-          <>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">Ready to Scan</h2>
-            <p className="text-gray-500 mb-6">
-              We'll guide you through capturing the front and back of the product for AI-powered verification.
-            </p>
-            <div className="grid grid-cols-2 gap-3 mb-8">
-              {scanPhases.map((phase) => (
-                <div key={phase.id} className="text-center p-3 rounded-xl bg-gray-50 border border-gray-100">
-                  <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-2">
-                    <Icon name={phase.icon} size={18} className="text-primary" library="fi" />
-                  </div>
-                  <p className="text-xs font-semibold text-gray-700">{phase.name}</p>
-                  <p className="text-[10px] text-gray-400 mt-1">{phase.target.substring(0, 24)}…</p>
-                </div>
-              ))}
-            </div>
             {!cameraActive && (
-              <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-xl flex items-center gap-3">
-                <Icon name="AlertTriangle" size={20} className="text-yellow-600" library="fi" />
-                <p className="text-sm text-yellow-700">{cameraError || 'Please enable camera access to start scanning.'}</p>
+              <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
+                {cameraPermission === 'idle' || cameraPermission === 'requesting' ? (
+                  <div className="text-center">
+                    <div className="w-8 h-8 border-2 border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                    <p className="text-white/40 text-[10px]">Requesting camera…</p>
+                  </div>
+                ) : cameraPermission === 'unsupported' ? (
+                  <div className="text-center px-4">
+                    <AlertCircle size={28} className="mx-auto mb-2 text-yellow-400" />
+                    <p className="text-white text-xs font-semibold mb-1">Camera Not Supported</p>
+                    <p className="text-white/40 text-[10px]">Use Chrome, Safari, or Firefox.</p>
+                  </div>
+                ) : (
+                  <div className="text-center px-4">
+                    <CameraOff size={28} className="mx-auto mb-2 text-white/20" />
+                    <p className="text-white text-xs font-semibold mb-1">Camera Access Denied</p>
+                    <p className="text-white/40 text-[10px] mb-3">{cameraError}</p>
+                    <button onClick={startCamera} className="px-4 py-1.5 bg-green-500 rounded-lg text-[10px] font-semibold text-white">Retry</button>
+                  </div>
+                )}
               </div>
             )}
-            <button
-              onClick={startScanning}
-              disabled={!cameraActive}
-              className={`w-full py-4 rounded-xl font-medium flex items-center justify-center gap-2 transition-all ${
-                cameraActive ? 'bg-primary text-white hover:bg-primary-dark shadow-lg shadow-primary/30' : 'bg-gray-200 text-gray-500 cursor-not-allowed'
-              }`}
-            >
-              <Icon name="Camera" size={20} library="fi" />
-              {cameraActive ? `Begin ${TOTAL_PHASES}-Point Scan` : 'Waiting for Camera…'}
-            </button>
-            {cameraActive && (
-              <p className="text-xs text-center text-gray-400 mt-4">
-                Make sure the product is well-lit and all labels are clearly visible.
-              </p>
+
+            <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(ellipse at 50% 50%, transparent 45%, rgba(0,0,0,0.45) 100%)' }} />
+
+            {scanning && (
+              <div className="absolute inset-0 pointer-events-none z-20">
+                <svg width="100%" height="100%" style={{ position: 'absolute', inset: 0, opacity: 0.12 }}>
+                  <defs>
+                    <pattern id="aiGrid" width="40" height="40" patternUnits="userSpaceOnUse">
+                      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#22c55e" strokeWidth="0.5"/>
+                    </pattern>
+                  </defs>
+                  <rect width="100%" height="100%" fill="url(#aiGrid)" />
+                </svg>
+
+                <div style={{
+                  position: 'absolute', top: '12%', left: '8%',
+                  width: 28, height: 28,
+                  borderTop: '2px solid rgba(34,197,94,0.9)',
+                  borderLeft: '2px solid rgba(34,197,94,0.9)',
+                  animation: 'scanPulse 1.5s ease-in-out infinite',
+                }} />
+                <div style={{
+                  position: 'absolute', top: '12%', right: '8%',
+                  width: 28, height: 28,
+                  borderTop: '2px solid rgba(34,197,94,0.9)',
+                  borderRight: '2px solid rgba(34,197,94,0.9)',
+                  animation: 'scanPulse 1.5s ease-in-out infinite 0.2s',
+                }} />
+                <div style={{
+                  position: 'absolute', bottom: '12%', left: '8%',
+                  width: 28, height: 28,
+                  borderBottom: '2px solid rgba(34,197,94,0.9)',
+                  borderLeft: '2px solid rgba(34,197,94,0.9)',
+                  animation: 'scanPulse 1.5s ease-in-out infinite 0.4s',
+                }} />
+                <div style={{
+                  position: 'absolute', bottom: '12%', right: '8%',
+                  width: 28, height: 28,
+                  borderBottom: '2px solid rgba(34,197,94,0.9)',
+                  borderRight: '2px solid rgba(34,197,94,0.9)',
+                  animation: 'scanPulse 1.5s ease-in-out infinite 0.6s',
+                }} />
+
+                {[
+                  { top: '22%', left: '20%' },
+                  { top: '22%', left: '75%' },
+                  { top: '50%', left: '48%' },
+                  { top: '74%', left: '22%' },
+                  { top: '74%', left: '74%' },
+                ].map((pos, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      position: 'absolute',
+                      top: pos.top,
+                      left: pos.left,
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      background: '#22c55e',
+                      boxShadow: '0 0 8px 2px rgba(34,197,94,0.5)',
+                      animation: 'scanPulse 1.8s ease-in-out infinite',
+                      animationDelay: `${i * 0.3}s`,
+                    }}
+                  />
+                ))}
+              </div>
             )}
-            <div className="flex items-center gap-3 mt-4">
-              <div className="flex-1 h-px bg-gray-200" />
-              <span className="text-xs text-gray-400">or</span>
-              <div className="flex-1 h-px bg-gray-200" />
-            </div>
-            <button
-              onClick={() => { setUploadMode(true); setUploadSlots({ 0: null, 1: null }); setSubmitError(null); }}
-              className="mt-3 w-full py-3 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors"
-            >
-              <Icon name="Image" size={18} className="text-gray-500" library="fi" />
-              Upload Images from Gallery
-            </button>
-          </>
-        ) : (
-          <>
-            {!showNextPrompt ? (
+
+            {scanning && !showNextPrompt && !submitting && (
               <>
-                <div className="mb-6">
-                  <div className="flex justify-between items-center mb-2">
-                    <div>
-                      <h2 className="text-lg font-bold text-gray-900">{currentPhaseData.name}</h2>
-                      <p className="text-xs text-gray-500">Phase {currentPhase + 1} of {TOTAL_PHASES}</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-1 bg-primary/10 px-3 py-1 rounded-full">
-                        <Icon name={scanDirection === 'down' ? 'ArrowDown' : 'ArrowUp'} size={14} className="text-primary" library="fi" />
-                        <span className="text-xs font-medium text-primary">{scanDirection === 'down' ? 'Scanning Down' : 'Scanning Up'}</span>
-                      </div>
-                      <span className="text-2xl font-bold text-primary">{Math.round(progress)}%</span>
-                    </div>
-                  </div>
-                  <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-primary rounded-full" style={{ width: `${progress}%`, transition: 'width 40ms linear' }} />
-                  </div>
-                </div>
-
-                <Card className="mb-4 bg-primary/5 border border-primary/20">
-                  <h3 className="text-sm font-medium text-primary mb-2 flex items-center gap-2">
-                    <Icon name="Target" size={16} className="text-primary" library="fi" />
-                    Currently Detecting:
-                  </h3>
-                  <p className="text-sm text-gray-600">{currentPhaseData.target}</p>
-                </Card>
-
-                {detectedFeatures.length > 0 && (
-                  <div className="mt-4">
-                    <p className="text-xs font-medium text-gray-500 mb-2">Features Detected:</p>
-                    <div className="space-y-1">
-                      {detectedFeatures.slice(-4).map((feature, idx) => (
-                        <div key={idx} className="flex items-center gap-2 text-xs text-gray-600">
-                          <Icon name="Check" size={12} className="text-green-500" library="fi" />
-                          {feature}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {completedPhases.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-gray-100">
-                    <p className="text-xs font-medium text-gray-500 mb-2">Completed Phases:</p>
-                    <div className="flex gap-2">
-                      {completedPhases.map((phaseId) => (
-                        <div key={phaseId} className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center border border-primary/30">
-                          <Icon name="Check" size={14} className="text-primary" library="fi" />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <div
+                  className="absolute left-0 right-0 h-px pointer-events-none z-30"
+                  style={{
+                    top: `${linePosition}%`,
+                    background: 'linear-gradient(90deg, transparent, #22c55e 15%, #22c55e 85%, transparent)',
+                    boxShadow: '0 0 20px 5px rgba(34,197,94,0.6)',
+                    transition: 'top 25ms linear',
+                  }}
+                />
+                <div
+                  className="absolute left-0 right-0 pointer-events-none z-20"
+                  style={{
+                    top: `calc(${linePosition}% - 20px)`,
+                    height: '40px',
+                    background: 'linear-gradient(180deg, transparent, rgba(34,197,94,0.15), transparent)',
+                    transition: 'top 25ms linear',
+                  }}
+                />
               </>
-            ) : !submitting ? (
-              <div className="text-center py-8">
-                <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Icon name="CheckCircle" size={40} className="text-primary" library="fi" />
-                </div>
-                <h3 className="text-xl font-bold text-gray-900 mb-2">Phase {currentPhase + 1} Complete!</h3>
-                <p className="text-gray-600 mb-6">{currentPhaseData.nextInstruction}</p>
-                {currentPhase < TOTAL_PHASES - 1 && (
-                  <button onClick={continueToNextPhase} className="bg-primary text-white px-6 py-3 rounded-xl font-medium hover:bg-primary-dark transition-colors w-full">
-                    Continue to Phase {currentPhase + 2}
-                  </button>
-                )}
-              </div>
-            ) : null}
-
-            {!showNextPrompt && (
-              <button onClick={resetScan} className="mt-6 w-full py-3 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50 transition-colors">
-                Cancel Scan
-              </button>
             )}
-          </>
-        )}
+
+            <div className="absolute inset-0 pointer-events-none rounded-2xl border border-white/20" />
+
+            <div className="absolute inset-0 pointer-events-none" style={{ margin: '10px' }}>
+              <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-white/60 rounded-tl-lg" />
+              <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-white/60 rounded-tr-lg" />
+              <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-white/60 rounded-bl-lg" />
+              <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-white/60 rounded-br-lg" />
+            </div>
+
+            {cameraActive && !scanning && !waitingForContinue && detectionState.hasObject && (
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+                <div className="w-10 h-10 rounded-full flex items-center justify-center border border-green-500/50">
+                  <div className="w-2 h-2 rounded-full bg-green-500/80" />
+                </div>
+              </div>
+            )}
+
+            {scanning && !showNextPrompt && !submitting && (
+              <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-md rounded-full px-2 py-0.5 z-30">
+                <span className="text-[9px] font-medium text-white/80">{currentPhaseData.name} Package</span>
+              </div>
+            )}
+
+            {scanning && !showNextPrompt && !submitting && (
+              <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-md rounded-full px-2 py-0.5 z-30">
+                <span className="text-[9px] font-medium text-green-400">{Math.round(scanProgress)}%</span>
+              </div>
+            )}
+
+            {showSuccess && (
+              <div className="absolute inset-0 flex items-center justify-center rounded-2xl z-40 bg-black/60 backdrop-blur-sm animate-fadeIn">
+                <div className="rounded-full p-4 bg-green-500 shadow-lg shadow-green-500/40 animate-bounceIn">
+                  <Check size={32} className="text-white" />
+                </div>
+              </div>
+            )}
+
+            {showNextPrompt && waitingForContinue && currentPhase < TOTAL_PHASES - 1 && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center z-40 rounded-2xl bg-black/85 backdrop-blur-md animate-fadeIn">
+                <div className="text-center px-5 w-full">
+                  <div className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3 bg-green-500/15 border border-green-500">
+                    <ArrowRight size={22} className="text-green-500" />
+                  </div>
+                  <h3 className="text-white text-sm font-bold mb-1">{currentPhaseData.captureMessage}</h3>
+                  <p className="text-white/50 text-xs mb-4">{currentPhaseData.nextInstruction}</p>
+                  <button
+                    onClick={continueToNextPhase}
+                    className="text-white px-5 py-2.5 rounded-lg font-semibold text-xs w-full max-w-[200px] mx-auto bg-green-500 hover:bg-green-600 transition-colors"
+                  >
+                    {currentPhaseData.continueButtonText}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {submitting && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center z-40 rounded-2xl bg-black/85 backdrop-blur-md animate-fadeIn">
+                <div className="text-center px-5">
+                  <div className="w-12 h-12 border-[2px] border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                  <h3 className="text-white text-sm font-bold mb-1">Analysing…</h3>
+                  <p className="text-white/40 text-[10px]">Verifying your product</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-3 px-3 w-full flex justify-center">
+          <div className="px-4 py-2 rounded-full bg-[#1a1a1a]/90 border border-white/10 max-w-[300px]">
+            <p className="text-white/90 text-xs font-medium text-center">{getHintMessage()}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-none pb-8 pt-3 px-6">
+        <div className="flex items-center justify-between">
+          <button onClick={() => { setUploadMode(true); setUploadSlots({ 0: null, 1: null }); setSubmitError(null); }} className="flex flex-col items-center gap-1">
+            <div className="w-12 h-12 rounded-full flex items-center justify-center bg-white/10 border border-white/15 hover:bg-white/20 transition-colors">
+              <Image size={18} className="text-white" />
+            </div>
+            <span className="text-white/50 text-[9px] font-medium">Gallery</span>
+          </button>
+
+          {scanning && !submitting && !showNextPrompt ? (
+            <button onClick={resetScan} className="flex flex-col items-center gap-1">
+              <div className="w-16 h-16 rounded-full flex items-center justify-center border-2 border-red-500/40">
+                <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center">
+                  <X size={20} className="text-red-400" />
+                </div>
+              </div>
+              <span className="text-white/50 text-[9px]">Cancel</span>
+            </button>
+          ) : submitting ? (
+            <div className="flex flex-col items-center gap-1">
+              <div className="w-16 h-16 rounded-full flex items-center justify-center border-2 border-green-500/40">
+                <div className="w-10 h-10 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+              <span className="text-white/50 text-[9px]">Analysing</span>
+            </div>
+          ) : showNextPrompt ? null : (
+            <button
+              onClick={startScan}
+              disabled={!canStartScan}
+              className="flex flex-col items-center gap-1"
+            >
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center transition-all ${!canStartScan ? 'opacity-40' : ''}`}>
+                <div
+                  className={`w-16 h-16 rounded-full ${canStartScan
+                    ? 'bg-gradient-to-br from-green-400 to-green-600 shadow-lg shadow-green-500/40'
+                    : 'bg-white/15'
+                  }`}
+                />
+              </div>
+              <span className={`text-[9px] font-medium ${canStartScan ? 'text-green-400' : 'text-white/40'}`}>
+                {canStartScan ? 'Scan' : 'Position'}
+              </span>
+            </button>
+          )}
+
+          <button onClick={toggleTorch} className="flex flex-col items-center gap-1">
+            <div
+              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${torchOn ? 'bg-green-500' : 'bg-white/10 border border-white/15'} hover:bg-green-600`}
+            >
+              <Flashlight size={18} className={torchOn ? 'text-white' : 'text-white'} />
+            </div>
+            <span className={`text-[9px] font-medium ${torchOn ? 'text-green-400' : 'text-white/50'}`}>Torch</span>
+          </button>
+        </div>
       </div>
 
       <style>{`
-        @keyframes fadeIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
-        .animate-fadeIn { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes bounceIn { 0% { transform: scale(0.4); opacity: 0; } 70% { transform: scale(1.1); } 100% { transform: scale(1); opacity: 1; } }
+        @keyframes scanPulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+        .animate-fadeIn { animation: fadeIn 0.2s ease-out; }
+        .animate-bounceIn { animation: bounceIn 0.3s ease-out; }
       `}</style>
     </div>
   );

@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import ScrollToTop from './components/common/ScrollToTop';
 
-// Consumer Pages
+// Consumer Pages fixed
 import MobileSplash from './pages/consumer/MobileSplash';
 import LandingPage from './pages/consumer/LandingPage';
 import Onboarding from './pages/consumer/Onboarding';
@@ -19,6 +19,12 @@ import TermsOfService from './pages/consumer/TermsOfService';
 import HelpSupport from './pages/consumer/HelpSupport';
 import EditProfile from './pages/consumer/EditProfile';
 import RoleSelect from './pages/consumer/RoleSelect';
+
+// Scan Result Components
+import ScanResultSafe from './components/consumer/Scan/ScanResultSafe';
+import ScanResultFake from './components/consumer/Scan/ScanResultFake';
+import ScanResultSuspicious from './components/consumer/Scan/ScanResultSuspicious';
+import ScanResultRescan from './components/consumer/Scan/ScanResultRescan';
 
 // Company Pages
 import CompanyLogin from './pages/company/Login';
@@ -40,6 +46,10 @@ import NAFDACVendors from './pages/nafdac/VendorTracker';
 import NAFDACAnalytics from './pages/nafdac/Analytics';
 import NAFDACExport from './pages/nafdac/ExportData';
 
+// Admin Pages
+import AdminLogin from './pages/admin/AdminLogin';
+import AdminDashboard from './pages/admin/AdminDashboard';
+
 // Home component with screen size detection
 const HomeRedirect = () => {
   const navigate = useNavigate();
@@ -54,9 +64,6 @@ const HomeRedirect = () => {
     };
     
     checkScreenSize();
-    // Optional: Add resize listener if you want to handle screen resize
-    // window.addEventListener('resize', checkScreenSize);
-    // return () => window.removeEventListener('resize', checkScreenSize);
   }, [navigate]);
   
   return null;
@@ -103,6 +110,14 @@ const NAFDACProtectedRoute = ({ children }) => {
   return children;
 };
 
+const AdminProtectedRoute = ({ children }) => {
+  const auth = JSON.parse(localStorage.getItem('adminAuth') || '{}');
+  if (!auth.authenticated) {
+    return <Navigate to="/admin" replace />;
+  }
+  return children;
+};
+
 function App() {
   return (
     <BrowserRouter
@@ -139,7 +154,11 @@ function App() {
         {/* Protected Consumer Routes */}
         <Route path="/home" element={<ConsumerProtectedRoute><Home /></ConsumerProtectedRoute>} />
         <Route path="/scan" element={<ConsumerProtectedRoute><Scan /></ConsumerProtectedRoute>} />
-        <Route path="/scan/:result" element={<ConsumerProtectedRoute><ScanResult /></ConsumerProtectedRoute>} />
+        <Route path="/scan/result" element={<ConsumerProtectedRoute><ScanResult /></ConsumerProtectedRoute>} />
+        <Route path="/scan/safe" element={<ConsumerProtectedRoute><ScanResultSafe /></ConsumerProtectedRoute>} />
+        <Route path="/scan/fake" element={<ConsumerProtectedRoute><ScanResultFake /></ConsumerProtectedRoute>} />
+        <Route path="/scan/suspicious" element={<ConsumerProtectedRoute><ScanResultSuspicious /></ConsumerProtectedRoute>} />
+        <Route path="/scan/rescan" element={<ConsumerProtectedRoute><ScanResultRescan /></ConsumerProtectedRoute>} />
         <Route path="/report" element={<ConsumerProtectedRoute><Report /></ConsumerProtectedRoute>} />
         <Route path="/profile" element={<ConsumerProtectedRoute><Profile /></ConsumerProtectedRoute>} />
         <Route path="/scan-history" element={<ConsumerProtectedRoute><ScanHistory /></ConsumerProtectedRoute>} />
@@ -163,6 +182,10 @@ function App() {
         <Route path="/nafdac/vendors" element={<NAFDACProtectedRoute><NAFDACVendors /></NAFDACProtectedRoute>} />
         <Route path="/nafdac/analytics" element={<NAFDACProtectedRoute><NAFDACAnalytics /></NAFDACProtectedRoute>} />
         <Route path="/nafdac/export" element={<NAFDACProtectedRoute><NAFDACExport /></NAFDACProtectedRoute>} />
+
+        {/* Admin Routes */}
+        <Route path="/admin" element={<AdminLogin />} />
+        <Route path="/admin/dashboard" element={<AdminProtectedRoute><AdminDashboard /></AdminProtectedRoute>} />
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
