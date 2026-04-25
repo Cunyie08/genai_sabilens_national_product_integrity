@@ -1,7 +1,7 @@
 """Authentication request and response schemas"""
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict
 from backend.models.user import UserRole, UserStatus
 
 
@@ -94,8 +94,7 @@ class UserResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class AuthResponse(BaseModel):
@@ -130,8 +129,7 @@ class SessionResponse(BaseModel):
     expires_at: datetime
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class LogoutRequest(BaseModel):

@@ -33,7 +33,7 @@ class ScanService:
             longitude=req.longitude,
             location_text=req.location_text,
             status="pending",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db.add(scan)
         await db.commit()
@@ -71,7 +71,7 @@ class ScanService:
             raise ValueError("Scan not found")
         
         scan.status = status
-        scan.updated_at = datetime.utcnow()
+        scan.updated_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(scan)
         return scan
@@ -89,7 +89,7 @@ class ScanService:
             fusion_result=analysis_data.get("fusion_result"),
             risk_level=analysis_data.get("risk_level"),
             recommendation=analysis_data.get("recommendation"),
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db.add(analysis)
         await db.commit()

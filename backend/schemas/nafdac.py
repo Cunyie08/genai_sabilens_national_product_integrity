@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from datetime import datetime, date
 from uuid import UUID
@@ -88,8 +88,7 @@ class OfficerResponse(BaseModel):
     last_login: Optional[datetime]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 # ─── Company Management Schemas ──────────────────────────
@@ -104,8 +103,7 @@ class CompanyListResponse(BaseModel):
     verified_at: Optional[datetime]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class CompanyDetailResponse(CompanyListResponse):
@@ -172,8 +170,7 @@ class LiveAlertResponse(BaseModel):
     is_acknowledged: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 # ─── Alert Schemas ───────────────────────────────────────
@@ -193,9 +190,7 @@ class AlertResponse(BaseModel):
     acknowledged_at: Optional[datetime]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-        populate_by_name = True
+model_config = ConfigDict()
 
 
 class AlertAcknowledgeRequest(BaseModel):
@@ -240,8 +235,7 @@ class CaseResponse(BaseModel):
     resolved_by: Optional[UUID]
     resolution_notes: Optional[str]
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class CaseAssignRequest(BaseModel):
@@ -281,8 +275,7 @@ class VendorResponse(BaseModel):
     last_reported_at: Optional[datetime]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class VendorBlacklistRequest(BaseModel):
@@ -320,8 +313,7 @@ class CategoryAnalyticsResponse(BaseModel):
     period_start: date
     period_end: date
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class RegionAnalyticsResponse(BaseModel):
@@ -331,8 +323,7 @@ class RegionAnalyticsResponse(BaseModel):
     counterfeit_count: int
     risk_score: Optional[float]
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class TrendComparisonResponse(BaseModel):
@@ -359,8 +350,7 @@ class HotspotResponse(BaseModel):
     severity_score: Optional[float]
     risk_level: Optional[str]
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class PredictionResponse(BaseModel):
@@ -421,8 +411,7 @@ class RaidResponse(BaseModel):
     notes: Optional[str]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class WarningNoticeRequest(BaseModel):
@@ -501,8 +490,7 @@ class AuditLogResponse(BaseModel):
     ip_address: Optional[str]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class PermissionResponse(BaseModel):

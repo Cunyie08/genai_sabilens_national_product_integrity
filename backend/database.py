@@ -12,18 +12,18 @@ class Base(DeclarativeBase):
 
 
 # Create async engine.
-# NOTE: Supabase uses pgbouncer in transaction mode (port 6543).
-# - statement_cache_size=0 disables prepared statement caching in asyncpg
-#   (required to avoid DuplicatePreparedStatementError with pgbouncer).
-# - ssl='require' enforces SSL for Supabase connections (Supabase requires SSL).
+# NOTE: Cloud SQL PostgreSQL — direct connection on port 5432 via public IP.
+# Use the Cloud SQL Auth Proxy or Cloud SQL Python Connector for private-IP / IAM auth.
+# - statement_cache_size=0 is required when using Cloud SQL Connector or pgbouncer.
+# - ssl='require' enforces TLS for Cloud SQL connections (recommended for production).
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
     future=True,
     pool_pre_ping=True,
     connect_args={
-        "statement_cache_size": 0,  # Required for pgbouncer transaction mode
-        "ssl": "require",           # Required for Supabase SSL enforcement
+        "statement_cache_size": 0,  # Required with Cloud SQL Connector / pgbouncer
+        "ssl": False,           # Enforce TLS for Cloud SQL connections
     },
 )
 

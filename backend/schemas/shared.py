@@ -1,5 +1,5 @@
 """Shared verification and location schemas."""
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 from uuid import UUID
 
@@ -51,8 +51,7 @@ class ProductPublicResponse(BaseModel):
     status: str
     image_urls: Optional[list] = None
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 # ─── Location Schemas ────────────────────────────────────
@@ -64,8 +63,7 @@ class StateResponse(BaseModel):
     capital: Optional[str] = None
     region: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class CityResponse(BaseModel):

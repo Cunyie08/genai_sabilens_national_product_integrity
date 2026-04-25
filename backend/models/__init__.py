@@ -17,6 +17,7 @@ from backend.models.analytics import (
     AuditLog,
     SystemLog,
 )
+from backend.admin.models import EnforcementCase, AdminReport
 
 __all__ = [
     "User",
@@ -38,4 +39,6 @@ __all__ = [
     "Language",
     "AuditLog",
     "SystemLog",
+    "EnforcementCase",
+    "AdminReport",
 ]

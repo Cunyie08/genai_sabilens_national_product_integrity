@@ -37,7 +37,37 @@ env/
 ENV/
 .env
 backend\.env
-chroma_db/
+ADMIN_DASHBOARD_IMPLEMENTATION_PLAN.md
+Phase-1-Foundation-Networking.txt
+GCP_PROVISIONING_GUIDE.md
+GCP_CLOUD_SQL_SETUP_GUIDE.md
+sabilens_schema.sql
+
+
+
+# GCP service account key files
+*-key.json
+service-account*.json
+
+
+GCP_NEXT_STEPS.md
+deployment-github-actions.md
+
+# Tests and Reports
+test_coverage_report.md
+pytest.out
+.pytest_cache/
+backend/tests/
+patch_tests.py
+patch_reports.py
+testing.py
+
+# Large Files & Databases
+*.exe
+app.db
+*.sqlite3
+
+# Privacy & generated docs
 generate_privacy_policy_pdf
 PRIVACY_POLICY
 SabiLens_Privacy_Policy

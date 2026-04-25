@@ -106,7 +106,7 @@ async def nafdac_login(
         if user.status != "active":
             return error_response("Account is not active", code="ACCOUNT_INACTIVE", status_code=403)
 
-        user.last_login = datetime.utcnow()
+        user.last_login = datetime.now(timezone.utc)
         await db.commit()
 
         access_token = create_access_token(data={"sub": str(user.id)})
@@ -273,7 +273,7 @@ async def delete_officer(
         if not officer or officer.deleted_at is not None:
             raise HTTPException(status_code=404, detail="Officer not found")
 
-        officer.deleted_at = datetime.utcnow()
+        officer.deleted_at = datetime.now(timezone.utc)
         officer.status = "deleted"
 
         audit = AuditLog(
@@ -438,7 +438,7 @@ async def verify_company(
 
         old_status = company.status
         company.status = "active"
-        company.verified_at = datetime.utcnow()
+        company.verified_at = datetime.now(timezone.utc)
         company.verified_by = current_user.id
 
         db.add(AuditLog(
@@ -896,7 +896,7 @@ async def acknowledge_alert(
 
         alert.is_acknowledged = True
         alert.acknowledged_by = current_user.id
-        alert.acknowledged_at = datetime.utcnow()
+        alert.acknowledged_at = datetime.now(timezone.utc)
         await db.commit()
 
         return success_response(data=_alert_to_dict(alert), message="Alert acknowledged")
@@ -920,14 +920,14 @@ async def resolve_alert(
 
         alert.is_acknowledged = True
         alert.acknowledged_by = current_user.id
-        alert.acknowledged_at = datetime.utcnow()
+        alert.acknowledged_at = datetime.now(timezone.utc)
 
         # Also resolve the linked report
         if alert.report_id:
             report = await db.get(Report, alert.report_id)
             if report:
                 report.report_status = "resolved"
-                report.resolved_at = datetime.utcnow()
+                report.resolved_at = datetime.now(timezone.utc)
                 report.resolved_by = current_user.id
                 report.resolution_notes = req.resolution_notes
 
@@ -952,7 +952,7 @@ async def bulk_acknowledge_alerts(
             .values(
                 is_acknowledged=True,
                 acknowledged_by=current_user.id,
-                acknowledged_at=datetime.utcnow(),
+                acknowledged_at=datetime.now(timezone.utc),
             )
         )
         result = await db.execute(stmt)
@@ -1097,7 +1097,7 @@ async def update_case_status(
         old_status = report.report_status
         report.report_status = req.status.value
         if req.status.value == "resolved":
-            report.resolved_at = datetime.utcnow()
+            report.resolved_at = datetime.now(timezone.utc)
             report.resolved_by = current_user.id
             if req.notes:
                 report.resolution_notes = req.notes
@@ -1366,7 +1366,7 @@ async def blacklist_vendor(
             raise HTTPException(status_code=404, detail="Vendor not found")
 
         vendor.is_blacklisted = True
-        vendor.blacklisted_at = datetime.utcnow()
+        vendor.blacklisted_at = datetime.now(timezone.utc)
         vendor.blacklisted_by = current_user.id
 
         # Create alert if vendor has associated company via report

@@ -1,6 +1,6 @@
 """Company request and response schemas"""
 from typing import Optional, List
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from datetime import datetime, date
 
 
@@ -41,8 +41,7 @@ class CompanyProfileResponse(BaseModel):
     verified_at: Optional[datetime] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class ProductCreateRequest(BaseModel):
@@ -74,8 +73,7 @@ class ProductResponse(BaseModel):
     status: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class ProductListResponse(BaseModel):
@@ -141,8 +139,7 @@ class AlertResponse(BaseModel):
     is_acknowledged: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class AlertListResponse(BaseModel):
@@ -231,8 +228,7 @@ class TeamMemberResponse(BaseModel):
     status: str
     joined_at: datetime
 
-    class Config:
-        from_attributes = True
+model_config = ConfigDict()
 
 
 class TeamListResponse(BaseModel):
