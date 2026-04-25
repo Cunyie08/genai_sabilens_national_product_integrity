@@ -59,7 +59,7 @@ class CompanyService:
             state=company_data.get("state"),
             website=company_data.get("website"),
             status="pending",  # Needs NAFDAC verification
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db.add(company)
 
@@ -123,7 +123,7 @@ class CompanyService:
             expiry_date=_parse_date(product_data.get("expiry_date")),
             ingredients=product_data.get("ingredients"),
             warnings=product_data.get("warnings"),
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db.add(product)
         try:
@@ -159,7 +159,7 @@ class CompanyService:
             company_id=company_id,
             key_name=key_name,
             api_key=f"key_{secrets.token_urlsafe(32)}",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db.add(api_key)
         await db.commit()

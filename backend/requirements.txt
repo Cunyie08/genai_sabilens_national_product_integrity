@@ -1,6 +1,7 @@
+# Core API
 fastapi
 uvicorn[standard]
-sqlalchemy
+sqlalchemy[asyncio]
 asyncpg
 httpx
 pydantic
@@ -8,4 +9,31 @@ pydantic-settings
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
+alembic
+
+# Database
 geoalchemy2
+psycopg2-binary
+
+# GCP
+google-cloud-storage
+
+# AI — OpenAI
+openai>=1.30.0
+
+# Task queue
+celery[redis]>=5.3.0
+redis>=5.0.0
+
+# Data processing
+pandas>=2.0.0
+
+# Heatmap / charting (embedded in PDF report)
+geopandas>=0.14.0
+matplotlib>=3.8.0
+shapely>=2.0.0
+contextily>=1.6.0
+
+# PDF generation
+weasyprint>=62.0
+jinja2>=3.1.0

@@ -1,0 +1,53 @@
+You can copy and paste everything below this line directly to her. It is her step-by-step guide to cloning the repo, pulling the secrets, and spinning up the local server.
+
+Welcome to the SabiLens Backend! Here is how to get your local environment connected to our cloud database.
+
+Step 1: Install the Prerequisites
+Make sure you have these installed on your Windows machine:
+
+Python 3.x
+
+Git
+
+Google Cloud CLI
+
+Step 2: Clone and Setup the Repo
+Open your terminal and run:
+
+Bash
+git clone [YOUR_GITHUB_REPO_URL]
+cd Sabilens
+python -m venv venv
+venv\Scripts\activate
+pip install -r backend/requirements.txt
+Step 3: Authenticate with Google Cloud
+We use Google Cloud for our database and secret management. Run this to log in:
+
+Bash
+gcloud auth application-default login
+(A browser window will open. Log in with the Google account that has been granted access to the project.)
+
+Step 4: Pull the Secure Environment Variables
+Instead of sending passwords over Slack, we keep our .env file in Google Secret Manager. Run this command to securely download it into your local backend folder:
+
+Bash
+gcloud secrets versions access latest --secret="sabilens-env-file" --project="project-b7d671ed-83b2-411b-a3d" > backend\.env
+Step 5: Start the Database Tunnel
+Our database is locked behind a private Google network. You need the Cloud SQL Proxy to open a secure tunnel on your machine.
+
+Download the proxy by running:
+
+DOS
+curl.exe -L "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.21.1/cloud-sql-proxy.x64.exe" -o cloud-sql-proxy.exe
+Start the tunnel by running:
+
+DOS
+cloud-sql-proxy.exe project-b7d671ed-83b2-411b-a3d:africa-south1:sabilens-db --port 5433
+Leave this terminal window open! It keeps the connection alive.
+
+Step 6: Run the Server
+Open a second terminal window, navigate back to the Sabilens folder, ensure your virtual environment is active (venv\Scripts\activate), and start the backend:
+
+Bash
+uvicorn backend.main:app --reload
+You can now test the API endpoints at http://localhost:8000/docs.

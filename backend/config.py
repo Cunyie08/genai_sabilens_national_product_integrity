@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve .env relative to this file so it loads correctly regardless of
 # the working directory (e.g. running uvicorn from the repo root).
@@ -44,18 +44,23 @@ class Settings(BaseSettings):
     AI_REGULATORY_ENDPOINT: str = "http://localhost:8003/regulatory"
     AI_FUSION_ENDPOINT: str = "http://localhost:8004/fusion"
 
-    # File Storage
-    CLOUDINARY_URL: Optional[str] = None
-    CLOUDINARY_CLOUD_NAME: Optional[str] = None
-    CLOUDINARY_API_KEY: Optional[str] = None
-    CLOUDINARY_API_SECRET: Optional[str] = None
-    AWS_ACCESS_KEY_ID: Optional[str] = None
-    AWS_SECRET_ACCESS_KEY: Optional[str] = None
-    AWS_S3_BUCKET: Optional[str] = None
+    # File Storage — Google Cloud Storage
+    GCP_PROJECT_ID: Optional[str] = None
+    GCS_BUCKET: Optional[str] = None           # scan images + product artwork (public-read)
+    GCS_REPORTS_BUCKET: Optional[str] = None   # AI PDF reports (private, signed URLs)
+    GCS_MODELS_BUCKET: Optional[str] = None    # ML/OCR model files (private)
+    # Set GOOGLE_APPLICATION_CREDENTIALS to the path of your service account JSON key file.
+    # If running on GCE/GKE/Cloud Run, leave unset — Workload Identity is used automatically.
+
+    # OpenAI
+    OPENAI_API_KEY: str = ""
 
     # Celery
-    CELERY_BROKER_URL: str = "redis://localhost:6379"
-    CELERY_RESULT_BACKEND: str = "redis://localhost:6379"
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+
+    # GCS report bucket (private — 15-min signed URLs)
+    GCS_REPORTS_BUCKET: str = "sabilens-report-prod"
 
     @field_validator("DEBUG", mode="before")
     @classmethod
@@ -68,10 +73,7 @@ class Settings(BaseSettings):
                 return True
         return value
 
-    class Config:
-        env_file = str(_ENV_FILE)
-        case_sensitive = True
-        extra = "ignore"  # Ignore unknown env vars (e.g. SUPABASE_URL, SUPABASE_ANON_KEY)
+model_config = SettingsConfigDict(env_file=".env")
 
 
 settings = Settings()

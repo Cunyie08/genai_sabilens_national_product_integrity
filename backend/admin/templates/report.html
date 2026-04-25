@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body       { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+                 font-size: 11pt; color: #1a1a1a; margin: 0; padding: 0; }
+    .cover     { page-break-after: always; text-align: center; padding: 120px 60px; }
+    .cover h1  { font-size: 28pt; color: #16a34a; margin-bottom: 8px; }
+    .cover h2  { font-size: 16pt; color: #374151; margin-bottom: 4px; }
+    .cover .meta { font-size: 10pt; color: #6b7280; margin-top: 32px; }
+    h2.section { font-size: 15pt; color: #16a34a; border-bottom: 2px solid #d1fae5;
+                 padding-bottom: 4px; margin-top: 32px; }
+    .summary   { background: #f0fdf4; border-left: 4px solid #16a34a;
+                 padding: 12px 16px; border-radius: 4px; margin: 12px 0; }
+    .kpi-row   { display: flex; gap: 16px; margin: 12px 0; }
+    .kpi-card  { flex: 1; background: #f9fafb; border: 1px solid #e5e7eb;
+                 border-radius: 6px; padding: 12px; text-align: center; }
+    .kpi-value { font-size: 22pt; font-weight: bold; color: #16a34a; }
+    .kpi-label { font-size: 9pt; color: #6b7280; margin-top: 4px; }
+    .kpi-card.danger .kpi-value { color: #dc2626; }
+    .kpi-card.warn   .kpi-value { color: #f97316; }
+    .chart-img { width: 100%; max-width: 680px; display: block; margin: 16px auto; }
+    table      { width: 100%; border-collapse: collapse; font-size: 10pt; margin: 12px 0; }
+    th         { background: #16a34a; color: #fff; padding: 7px 10px; text-align: left; }
+    td         { padding: 6px 10px; border-bottom: 1px solid #e5e7eb; }
+    tr:nth-child(even) td { background: #f9fafb; }
+    .badge     { display: inline-block; padding: 2px 8px; border-radius: 12px;
+                 font-size: 9pt; font-weight: bold; }
+    .badge.critical { background: #fee2e2; color: #dc2626; }
+    .badge.high     { background: #ffedd5; color: #f97316; }
+    .badge.medium   { background: #fef9c3; color: #ca8a04; }
+    .badge.low      { background: #dcfce7; color: #16a34a; }
+    ul.findings { padding-left: 18px; }
+    ul.findings li { margin: 6px 0; }
+    ul.recs     { padding-left: 18px; }
+    ul.recs li  { margin: 6px 0; color: #374151; }
+    .footer     { font-size: 8pt; color: #9ca3af; text-align: center;
+                  margin-top: 48px; border-top: 1px solid #e5e7eb; padding-top: 8px; }
+    @page { margin: 20mm 18mm; }
+  </style>
+</head>
+<body>
+
+<!-- COVER PAGE -->
+<div class="cover">
+  <h1>SabiLens Intelligence Report</h1>
+  <h2>{{ report_json.title }}</h2>
+  {% if company_name %}<p style="color:#374151;font-size:13pt;">{{ company_name }}</p>{% endif %}
+  <div class="meta">
+    <p>Period: {{ filter_date_from or "All time" }} — {{ filter_date_to or "Present" }}</p>
+    <p>Generated: {{ report_json.generated_at }}</p>
+    <p>Report type: {{ report_type | replace("_", " ") | title }}</p>
+  </div>
+</div>
+
+<!-- EXECUTIVE SUMMARY -->
+<h2 class="section">Executive Summary</h2>
+<div class="summary">{{ report_json.executive_summary }}</div>
+
+<!-- KPI CARDS -->
+<h2 class="section">Key Metrics</h2>
+<div class="kpi-row">
+  <div class="kpi-card">
+    <div class="kpi-value">{{ overview.total_scans | int }}</div>
+    <div class="kpi-label">Total Scans</div>
+  </div>
+  <div class="kpi-card danger">
+    <div class="kpi-value">{{ overview.fake_count | int }}</div>
+    <div class="kpi-label">Fake Products Detected</div>
+  </div>
+  <div class="kpi-card warn">
+    <div class="kpi-value">{{ "%.1f" | format(overview.fake_rate_pct) }}%</div>
+    <div class="kpi-label">Fake Rate</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value">{{ overview.total_products_scanned | int }}</div>
+    <div class="kpi-label">Products Scanned</div>
+  </div>
+</div>
+
+<!-- HEATMAP -->
+<h2 class="section">Geographic Risk Heatmap</h2>
+<img class="chart-img" src="data:image/png;base64,{{ heatmap_b64 }}" alt="Nigeria Risk Heatmap" />
+
+<!-- TREND CHART -->
+<h2 class="section">Verdict Trend</h2>
+<img class="chart-img" src="data:image/png;base64,{{ trend_b64 }}" alt="Scan Verdict Trend" />
+
+<!-- KEY FINDINGS -->
+<h2 class="section">Key Findings</h2>
+<ul class="findings">
+{% for finding in report_json.key_findings %}
+  <li>{{ finding }}</li>
+{% endfor %}
+</ul>
+
+<!-- RISK ASSESSMENT -->
+<h2 class="section">Risk Assessment</h2>
+<p>
+  Overall risk level:
+  <span class="badge {{ report_json.risk_assessment.overall_level }}">
+    {{ report_json.risk_assessment.overall_level | upper }}
+  </span>
+</p>
+<p>{{ report_json.risk_assessment.rationale }}</p>
+
+<!-- HOTSPOT TABLE -->
+<h2 class="section">Hotspot Analysis</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Location</th><th>Risk Level</th><th>Fake Count</th><th>Fake %</th><th>Observation</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for h in report_json.hotspot_analysis %}
+    <tr>
+      <td>{{ h.location }}</td>
+      <td><span class="badge {{ h.risk_level }}">{{ h.risk_level | upper }}</span></td>
+      <td>{{ h.fake_count }}</td>
+      <td>{{ "%.1f" | format(h.fake_pct) }}%</td>
+      <td>{{ h.observation }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<!-- PRODUCT BREAKDOWN TABLE -->
+<h2 class="section">Product Breakdown</h2>
+<table>
+  <thead>
+    <tr><th>Product</th><th>NAFDAC No.</th><th>Fake %</th><th>Recommendation</th></tr>
+  </thead>
+  <tbody>
+  {% for p in report_json.product_breakdown %}
+    <tr>
+      <td>{{ p.product_name }}</td>
+      <td>{{ p.nafdac_number or "—" }}</td>
+      <td>{{ "%.1f" | format(p.fake_pct) }}%</td>
+      <td>{{ p.recommendation }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<!-- RECOMMENDATIONS -->
+<h2 class="section">Recommendations</h2>
+<ul class="recs">
+{% for rec in report_json.recommendations %}
+  <li>{{ rec }}</li>
+{% endfor %}
+</ul>
+
+<div class="footer">
+  Confidential — Generated by SabiLens Intelligence Platform &nbsp;|&nbsp;
+  {{ report_json.generated_at }}
+</div>
+
+</body>
+</html>

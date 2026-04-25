@@ -153,7 +153,7 @@ class NotificationService:
         stmt = (
             update(Notification)
             .where(and_(*conditions))
-            .values(is_read=True, read_at=datetime.utcnow())
+            .values(is_read=True, read_at=datetime.now(timezone.utc))
         )
         result = await db.execute(stmt)
         return result.rowcount
@@ -190,7 +190,7 @@ class NotificationService:
 
         if pref:
             pref.enabled = enabled
-            pref.updated_at = datetime.utcnow()
+            pref.updated_at = datetime.now(timezone.utc)
         else:
             pref = NotificationPreference(
                 user_id=user_id,

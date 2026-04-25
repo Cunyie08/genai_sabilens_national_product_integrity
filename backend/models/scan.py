@@ -23,6 +23,13 @@ class Scan(Base):
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, nullable=True)
 
+    # Columns added for admin dashboard (already exist in GCP — added here for ORM awareness)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)
+    scan_location_state = Column(String(100), nullable=True)
+    scan_location_lga = Column(String(100), nullable=True)
+    market_name = Column(String(255), nullable=True)
+    consumer_id_hash = Column(String(64), nullable=True)  # SHA-256 hash only — never raw ID
+
     # Columns added by migration 002
     product_name = Column(String(255), nullable=True)
     category = Column(String(100), nullable=True)

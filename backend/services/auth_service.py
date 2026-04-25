@@ -20,6 +20,11 @@ class AuthService:
     @staticmethod
     async def register_user(db: AsyncSession, req: RegisterRequest) -> Tuple[UserResponse, TokenResponse]:
         """Register new user"""
+        # super_admin accounts can only be created via the seed script or promoted
+        # by an existing super_admin via PATCH /api/v1/admin/users/{id}/role.
+        if req.role and str(req.role) in ("super_admin", "UserRole.SUPER_ADMIN"):
+            raise ValueError("super_admin role cannot be self-registered")
+
         # Check if user exists — only check email uniqueness if email was provided.
         # When email is None, SQLAlchemy generates "email IS NULL" which would match
         # every user without an email, causing all registrations to fail.
@@ -58,7 +63,7 @@ class AuthService:
             email=req.email,
             otp_code=otp_code,
             purpose="registration",
-            expires_at=datetime.utcnow() + timedelta(minutes=10),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
         )
         db.add(otp)
         await db.commit()
@@ -93,7 +98,7 @@ class AuthService:
             raise ValueError("User account is not active")
         
         # Update last login
-        user.last_login = datetime.utcnow()
+        user.last_login = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(user)
         
@@ -126,7 +131,7 @@ class AuthService:
             (OTPVerification.otp_code == otp_code) &
             (OTPVerification.purpose == purpose) &
             (OTPVerification.verified_at.is_(None)) &
-            (OTPVerification.expires_at > datetime.utcnow())
+            (OTPVerification.expires_at > datetime.now(timezone.utc))
         )
         result = await db.execute(stmt)
         otp = result.scalars().first()
@@ -135,7 +140,7 @@ class AuthService:
             raise ValueError("Invalid or expired OTP")
         
         # Mark as verified
-        otp.verified_at = datetime.utcnow()
+        otp.verified_at = datetime.now(timezone.utc)
         
         # Update user if registration
         if purpose == "registration":
@@ -169,7 +174,7 @@ class AuthService:
             email=email,
             otp_code=otp_code,
             purpose=purpose,
-            expires_at=datetime.utcnow() + timedelta(minutes=10),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
         )
         db.add(otp)
         await db.commit()
@@ -204,7 +209,7 @@ class AuthService:
             (OTPVerification.phone == phone) &
             (OTPVerification.otp_code == otp_code) &
             (OTPVerification.purpose == "password_reset") &
-            (OTPVerification.expires_at > datetime.utcnow())
+            (OTPVerification.expires_at > datetime.now(timezone.utc))
         )
         result = await db.execute(stmt)
         otp = result.scalars().first()
@@ -221,7 +226,7 @@ class AuthService:
             raise ValueError("User not found")
         
         user.password_hash = hash_password(new_password)
-        otp.verified_at = datetime.utcnow()
+        otp.verified_at = datetime.now(timezone.utc)
         await db.commit()
         
         return True

@@ -20,7 +20,7 @@ class ReportService:
             description=description,
             status="open",
             severity="high",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db.add(report)
         await db.commit()
@@ -32,7 +32,7 @@ class ReportService:
             alert_type="counterfeit_detected",
             severity="high",
             message=f"Counterfeit product reported: {description}",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db.add(alert)
         await db.commit()
@@ -48,7 +48,7 @@ class ReportService:
             evidence_type=evidence_data.get("type"),  # photo, video, document
             file_url=evidence_data.get("file_url"),
             description=evidence_data.get("description"),
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db.add(evidence)
         await db.commit()
@@ -87,7 +87,7 @@ class ReportService:
             raise ValueError("Report not found")
         
         report.status = status
-        report.updated_at = datetime.utcnow()
+        report.updated_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(report)
         return report

@@ -65,7 +65,7 @@ async def login_company(req: CompanyLoginRequest, db: AsyncSession = Depends(get
             raise HTTPException(status_code=400, detail="Company account is not linked to a company profile")
         user.company_id = company.id
 
-    user.last_login = datetime.utcnow()
+    user.last_login = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(user)
 
