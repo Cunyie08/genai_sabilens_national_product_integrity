@@ -1,0 +1,26 @@
+[Unit]
+Description=Sabilens Celery Worker
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deployer
+Group=deployer
+WorkingDirectory=/opt/sabilens
+EnvironmentFile=/opt/sabilens/backend/.env
+ExecStart=/opt/sabilens/venv/bin/celery \
+    -A backend.core.celery_app worker \
+    --loglevel=info \
+    --concurrency=2
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sabilens-celery-worker
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

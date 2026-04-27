@@ -43,7 +43,7 @@ class User(Base):
     # NEW: Location fields
     state = Column(String(100), nullable=True)
     city = Column(String(100), nullable=True)
-    last_login = Column(DateTime, nullable=True)
+    last_login = Column(DateTime(timezone=True), nullable=True)
     deleted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -73,6 +73,6 @@ class OTPVerification(Base):
     otp_code = Column(String(6), nullable=False)
     purpose = Column(String(50), nullable=True)
     # purpose IN ('registration', 'login', 'password_reset', 'phone_verification')
-    expires_at = Column(DateTime, nullable=False)
-    verified_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime, server_default=func.now())

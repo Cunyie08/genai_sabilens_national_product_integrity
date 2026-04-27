@@ -71,6 +71,8 @@ class TokenResponse(BaseModel):
 
 class UserResponse(BaseModel):
     """User response"""
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     email: Optional[str] = None
 
@@ -93,8 +95,6 @@ class UserResponse(BaseModel):
     last_login: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
-
-model_config = ConfigDict()
 
 
 class AuthResponse(BaseModel):
@@ -122,14 +122,14 @@ class AvatarUploadResponse(BaseModel):
 
 class SessionResponse(BaseModel):
     """Session response"""
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     user_id: str
     device_info: Optional[dict] = None
     ip_address: Optional[str] = None
     expires_at: datetime
     created_at: datetime
-
-model_config = ConfigDict()
 
 
 class LogoutRequest(BaseModel):
