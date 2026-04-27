@@ -1,0 +1,28 @@
+[Unit]
+Description=Sabilens FastAPI Application
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deployer
+Group=deployer
+WorkingDirectory=/opt/sabilens
+EnvironmentFile=/opt/sabilens/backend/.env
+ExecStart=/opt/sabilens/venv/bin/uvicorn backend.main:app \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --workers 2 \
+    --log-level info
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sabilens-fastapi
+
+# Limit permissions — no new privileges, restrict filesystem writes
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

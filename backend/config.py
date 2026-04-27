@@ -1,5 +1,5 @@
 """
-Configuration — owned by tunjipaul.
+Configuration - owned by tunjipaul.
 """
 from pathlib import Path
 from typing import Any, Optional
@@ -12,8 +12,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _ENV_FILE = Path(__file__).parent / ".env"
 
 
+
 class Settings(BaseSettings):
     """Application settings from environment variables"""
+
+    model_config = SettingsConfigDict(
+        env_file=str(_ENV_FILE),
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
 
     # App
     APP_NAME: str = "SabiLens"
@@ -46,11 +54,9 @@ class Settings(BaseSettings):
 
     # File Storage — Google Cloud Storage
     GCP_PROJECT_ID: Optional[str] = None
-    GCS_BUCKET: Optional[str] = None           # scan images + product artwork (public-read)
+    GCS_BUCKET: Optional[str] = None           # scan images + product artwork
     GCS_REPORTS_BUCKET: Optional[str] = None   # AI PDF reports (private, signed URLs)
     GCS_MODELS_BUCKET: Optional[str] = None    # ML/OCR model files (private)
-    # Set GOOGLE_APPLICATION_CREDENTIALS to the path of your service account JSON key file.
-    # If running on GCE/GKE/Cloud Run, leave unset — Workload Identity is used automatically.
 
     # OpenAI
     OPENAI_API_KEY: str = ""
@@ -58,9 +64,6 @@ class Settings(BaseSettings):
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
-
-    # GCS report bucket (private — 15-min signed URLs)
-    GCS_REPORTS_BUCKET: str = "sabilens-report-prod"
 
     @field_validator("DEBUG", mode="before")
     @classmethod
@@ -73,7 +76,6 @@ class Settings(BaseSettings):
                 return True
         return value
 
-model_config = SettingsConfigDict(env_file=".env")
 
 
 settings = Settings()
