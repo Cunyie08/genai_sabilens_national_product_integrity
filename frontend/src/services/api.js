@@ -5,7 +5,14 @@
  * in one place (VITE_API_BASE_URL in .env).
  */
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+// When accessed from a phone over the local network the hostname is the
+// laptop's network IP (e.g. 10.231.18.72), not "localhost".  Using
+// window.location.hostname means every device automatically talks to the
+// right host without any hardcoding.  VITE_API_BASE_URL overrides this for
+// staging / production deployments.
+const BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  `http://${window.location.hostname}:8000`;
 
 /**
  * Generic fetch wrapper with JSON handling and error normalisation.
@@ -96,6 +103,21 @@ export const scanApi = {
 
   /** Liveness check for the consumer scan service. */
   health: () => request('/api/consumer/scan/health'),
+
+  /** Create a QR cross-device scan session. Returns {session_id, mobile_url}. */
+  createSession: () =>
+    request('/api/v1/scan/session', { method: 'POST' }),
+
+  /** Poll session status — 'pending' | 'location_ready' | 'complete' | 'expired'. */
+  getSessionStatus: (sessionId) =>
+    request(`/api/v1/scan/session/${sessionId}/status`),
+
+  /** Phone calls this to push its GPS fix to the desktop session. */
+  submitPhoneLocation: (sessionId, { latitude, longitude }) =>
+    request(`/api/v1/scan/session/${sessionId}/location`, {
+      method: 'PUT',
+      body: JSON.stringify({ latitude, longitude }),
+    }),
 
   // ── Scan History Endpoints ─────────────────────────────────────────────────
 

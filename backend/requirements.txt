@@ -1,39 +1,60 @@
-# Core API
+# ── Core API ──────────────────────────────────────────────────────────────────
 fastapi
 uvicorn[standard]
+python-multipart
+
+# ── Database ──────────────────────────────────────────────────────────────────
 sqlalchemy[asyncio]
 asyncpg
-httpx
-pydantic
-pydantic-settings
+psycopg2-binary
+alembic
+geoalchemy2
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
 python-jose[cryptography]
 passlib[bcrypt]
-python-multipart
-alembic
+bcrypt
 
-# Database
-geoalchemy2
-psycopg2-binary
+# ── HTTP client ───────────────────────────────────────────────────────────────
+httpx
 
-# GCP
+# ── Pydantic / settings ───────────────────────────────────────────────────────
+pydantic
+pydantic-settings
+
+# ── GCP ───────────────────────────────────────────────────────────────────────
 google-cloud-storage
 
-# AI — OpenAI
+# ── AI — OpenAI ───────────────────────────────────────────────────────────────
 openai>=1.30.0
 
-# Task queue
+# ── Task queue (Celery + Redis) ───────────────────────────────────────────────
 celery[redis]>=5.3.0
 redis>=5.0.0
 
-# Data processing
-pandas>=2.0.0
+# ── Image processing ──────────────────────────────────────────────────────────
+Pillow>=10.0.0
 
-# Heatmap / charting (embedded in PDF report)
-geopandas>=0.14.0
-matplotlib>=3.8.0
+# ── Geospatial / reverse geocoding ───────────────────────────────────────────
+# NOTE: shapely and geopandas require GEOS/GDAL system libraries.
+# Local (Windows/Mac): install via conda or `pip install shapely geopandas` after
+#   installing GDAL from https://trac.osgeo.org/osgeo4w/ (Windows) or brew install gdal (Mac)
+# Docker / GCP Cloud Run: see Dockerfile — needs libgeos-dev libgdal-dev
 shapely>=2.0.0
+geopandas>=0.14.0
+
+# ── Data processing ───────────────────────────────────────────────────────────
+pandas>=2.0.0
+numpy>=1.24.0
+
+# ── Heatmap / charting (used in PDF reports) ─────────────────────────────────
+matplotlib>=3.8.0
 contextily>=1.6.0
 
-# PDF generation
+# ── PDF generation ────────────────────────────────────────────────────────────
 weasyprint>=62.0
 jinja2>=3.1.0
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest
+pytest-asyncio

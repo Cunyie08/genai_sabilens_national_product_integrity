@@ -1,36 +1,36 @@
 from __future__ import annotations
-from uuid import UUID
 from datetime import date
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import BaseModel
 
 
 class HeatmapFilters(BaseModel):
-    state: str | None = None
-    lga: str | None = None
-    subcategory_id: UUID | None = None
-    date_from: date | None = None
-    date_to: date | None = None
+    state:      str | None  = None   # Super Admin drill-down only
+    lga:        str | None  = None   # Company Admin granular filter
+    subcategory: str | None = None   # nafdac_chunks.json slug
+    date_from:  date | None = None
+    date_to:    date | None = None
 
 
-class HeatmapPoint(BaseModel):
-    state: str
-    lga: str | None
-    market_name: str | None
-    center_latitude: float | None
-    center_longitude: float | None
-    total_scans: int
-    fake_count: int
+class HeatmapFeature(BaseModel):
+    """One aggregated geographic unit — a state or an LGA."""
+    geo_id:       str            # Matches GeoJSON NAME_1 (state) or NAME_2 (LGA)
+    display_name: str            # e.g. "Lagos State" or "Alimosho LGA"
+    center_lat:   float | None   # AVG of scan latitudes in this unit
+    center_lng:   float | None
+    total_scans:      int
+    fake_count:       int
     suspicious_count: int
-    fake_proportion: float
+    authentic_count:  int
+    fake_pct:         float
     combined_risk_rate: float
     risk_level: Literal["critical", "high", "medium", "low"]
-    company_id: UUID | None
-    company_name: str | None
-    can_get_report: bool = True
+    breakdown_locked: bool = False   # True = NAFDAC caller lacks quantity_breakdown approval
 
 
 class HeatmapResponse(BaseModel):
-    points: list[HeatmapPoint]
-    total_points: int
+    aggregation_level: Literal["state", "lga"]
+    parent_geo:    str | None      # Populated when aggregation_level="lga"
+    features:      list[HeatmapFeature]
     filters_applied: HeatmapFilters
+    total_features: int

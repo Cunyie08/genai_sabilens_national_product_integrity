@@ -18,11 +18,21 @@ except ImportError:
 
 
 class AnalyticsDaily(Base):
-    """Daily analytics aggregates."""
+    """Daily analytics aggregates.
+
+    Scope axes (all nullable):
+      company_id IS NULL, state IS NULL  → platform-wide aggregate
+      company_id = X                     → per-company daily shard
+      state      = Y                     → per-state daily shard
+
+    Unique key: (date, company_id, state) — enforced by uix_analytics_daily_scope.
+    """
     __tablename__ = "analytics_daily"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    date = Column(Date, nullable=False, unique=True)
+    date = Column(Date, nullable=False)             # unique=True removed — composite index handles uniqueness
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)
+    state = Column(String(100), nullable=True)
     total_scans = Column(Integer, default=0)
     authentic_scans = Column(Integer, default=0)
     suspicious_scans = Column(Integer, default=0)

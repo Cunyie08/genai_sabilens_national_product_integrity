@@ -1,5 +1,4 @@
 from datetime import date
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,18 +16,18 @@ router = APIRouter()
 @router.get("/heatmap", response_model=None)
 @cache_response(ttl=60, key_prefix="admin:heatmap")
 async def heatmap_endpoint(
-    state: str | None = Query(None),
-    lga: str | None = Query(None),
-    subcategory_id: UUID | None = Query(None),
-    date_from: date | None = Query(None),
-    date_to: date | None = Query(None),
-    ctx: TenantContext = Depends(get_tenant_ctx),
-    db: AsyncSession = Depends(get_db),
+    state:       str | None  = Query(None, description="Super Admin drill-down: filter to one state"),
+    lga:         str | None  = Query(None),
+    subcategory: str | None  = Query(None, description="nafdac_chunks.json subcategory slug"),
+    date_from:   date | None = Query(None),
+    date_to:     date | None = Query(None),
+    ctx: TenantContext    = Depends(get_tenant_ctx),
+    db:  AsyncSession     = Depends(get_db),
 ):
     filters = HeatmapFilters(
         state=state,
         lga=lga,
-        subcategory_id=subcategory_id,
+        subcategory=subcategory,
         date_from=date_from,
         date_to=date_to,
     )
