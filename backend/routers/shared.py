@@ -22,6 +22,7 @@ from backend.schemas.shared import (
     ReverseGeocodeResponse,
 )
 from backend.services.rag_client import rag_healthcheck, verify_product_with_rag
+from backend.utils.geocoder import reverse_geocode as _reverse_geocode
 from backend.utils.response import error_response, success_response
 import logging
 
@@ -299,14 +300,23 @@ async def get_cities_by_state(
 
 
 @router.post("/api/location/reverse-geocode", response_model=None)
-async def reverse_geocode(req: ReverseGeocodeRequest):
+async def reverse_geocode_endpoint(req: ReverseGeocodeRequest):
     try:
+        state, lga = _reverse_geocode(req.latitude, req.longitude)
+        if state and lga:
+            formatted = f"{lga}, {state}, Nigeria"
+        elif state:
+            formatted = f"{state}, Nigeria"
+        else:
+            formatted = f"{req.latitude:.4f}° N, {req.longitude:.4f}° E"
+
         return success_response(
             data=ReverseGeocodeResponse(
-                state="Lagos",
-                city="Ikeja",
+                state=state,
+                lga=lga,
+                city=lga,       # backwards-compat alias
                 address=None,
-                formatted_location=f"{req.latitude:.4f}, {req.longitude:.4f} (Lagos, Nigeria)",
+                formatted_location=formatted,
             ).model_dump(),
             message="Reverse geocode completed",
         )

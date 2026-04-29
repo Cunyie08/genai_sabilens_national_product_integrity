@@ -19,6 +19,8 @@ import TermsOfService from './pages/consumer/TermsOfService';
 import HelpSupport from './pages/consumer/HelpSupport';
 import EditProfile from './pages/consumer/EditProfile';
 import RoleSelect from './pages/consumer/RoleSelect';
+import MobileLocationHandoff from './pages/consumer/MobileLocationHandoff';
+import MobileScanDone from './pages/consumer/MobileScanDone';
 
 // Scan Result Components
 import ScanResultSafe from './components/consumer/Scan/ScanResultSafe';
@@ -182,6 +184,10 @@ function App() {
         <Route path="/nafdac/vendors" element={<NAFDACProtectedRoute><NAFDACVendors /></NAFDACProtectedRoute>} />
         <Route path="/nafdac/analytics" element={<NAFDACProtectedRoute><NAFDACAnalytics /></NAFDACProtectedRoute>} />
         <Route path="/nafdac/export" element={<NAFDACProtectedRoute><NAFDACExport /></NAFDACProtectedRoute>} />
+
+        {/* Mobile scan — unprotected; phone user may not share auth with desktop */}
+        <Route path="/mobile-scan/done" element={<MobileScanDone />} />
+        <Route path="/mobile-scan/:sessionId" element={<MobileLocationHandoff />} />
 
         {/* Admin Routes */}
         <Route path="/admin" element={<AdminLogin />} />
