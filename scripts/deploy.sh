@@ -21,7 +21,7 @@ PROJECT_ID=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/projec
 log "Step 1/6 — Pulling latest code..."
 cd "$APP_DIR"
 git fetch --all --prune
-git reset --hard origin/main
+git reset --hard origin/master
 log "Code updated → $(git rev-parse --short HEAD) ($(git log -1 --format='%s'))"
 
 # ─── 2. Activate Virtual Environment ─────────────────────────────────────────
