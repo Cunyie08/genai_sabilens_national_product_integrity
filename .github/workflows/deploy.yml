@@ -1,4 +1,3 @@
-#Changes made to deploy.yml to bypass the folder error and allow deployment without running tests first. The 'needs' dependency on the test job has been commented out, and the test job itself is also commented out until the tests folder is created.
 name: Deploy to GCE
 
 on:
@@ -12,17 +11,9 @@ env:
   GCE_ZONE: ${{ secrets.GCE_ZONE }}
 
 jobs:
-# ─── JOB 1: COMMENTED OUT TO BYPASS FOLDER ERROR ─────────────────────────────
-#  test:
-#    name: Run Backend Tests
-#    runs-on: ubuntu-latest
-#    ... (keeping this section commented until you create the tests folder)
-
-# ─── JOB 2: Updated to remove the 'needs' dependency ──────────────────────────
   deploy:
     name: Deploy to GCE via IAP
     runs-on: ubuntu-latest
-    # needs: [test]  <-- COMMENT THIS OUT so it runs immediately
     environment: production
 
     permissions:
@@ -37,6 +28,9 @@ jobs:
         id: auth
         uses: google-github-actions/auth@v2
         with:
+          # CRITICAL: This ensures the token is generated in a format 
+          # that 'gcloud secrets' can use for impersonation.
+          token_format: 'access_token' 
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
