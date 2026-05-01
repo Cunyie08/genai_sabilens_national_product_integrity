@@ -22,8 +22,9 @@ engine = create_async_engine(
     future=True,
     pool_pre_ping=True,
     connect_args={
-        "statement_cache_size": 0,  # Required with Cloud SQL Connector / pgbouncer
-        "ssl": False,           # Enforce TLS for Cloud SQL connections
+        "statement_cache_size": 0,
+        # This will look for a variable in your .env, or default to False locally
+        "ssl": settings.DB_SSL_MODE if hasattr(settings, 'DB_SSL_MODE') else False,
     },
 )
 
