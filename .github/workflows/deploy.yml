@@ -1,5 +1,4 @@
 #Changes made to deploy.yml to bypass the folder error and allow deployment without running tests first. The 'needs' dependency on the test job has been commented out, and the test job itself is also commented out until the tests folder is created.
-#Changes made to database.py to add a conditional for the DB_SSL_MODE environment variable, allowing it to be set in the .env file and used in the connection arguments. This provides flexibility for local development and production environments.
 name: Deploy to GCE
 
 on:
