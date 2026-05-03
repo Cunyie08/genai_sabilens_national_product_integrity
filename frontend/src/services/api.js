@@ -12,7 +12,7 @@
 // staging / production deployments.
 const BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
-  `http://${window.location.hostname}:8000`;
+  'https://sabilens.com';
 
 /**
  * Generic fetch wrapper with JSON handling and error normalisation.

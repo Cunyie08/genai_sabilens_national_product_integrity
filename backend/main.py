@@ -40,11 +40,13 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    # allow_origins=["*"] is incompatible with allow_credentials=True — the
-    # CORS spec forbids it and browsers will drop the credential header.
-    # allow_origin_regex covers localhost, 127.0.0.1, and any LAN IP so
-    # mobile devices on the same Wi-Fi network can reach the API.
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?",
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://34.35.129.170:3000",
+        "https://sabilens.com",
+        "https://www.sabilens.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

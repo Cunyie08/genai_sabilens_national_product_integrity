@@ -6,26 +6,26 @@ from sqlalchemy.orm import DeclarativeBase
 
 from backend.config import settings
 
-
 class Base(DeclarativeBase):
     pass
 
+# 1. Start with the base connection arguments required for Cloud SQL / pgbouncer
+db_connect_args = {
+    "statement_cache_size": 0,
+}
 
-# Create async engine.
-# NOTE: Cloud SQL PostgreSQL — direct connection on port 5432 via public IP.
-# Use the Cloud SQL Auth Proxy or Cloud SQL Python Connector for private-IP / IAM auth.
-# - statement_cache_size=0 is required when using Cloud SQL Connector or pgbouncer.
-# - ssl='require' enforces TLS for Cloud SQL connections (recommended for production).
+# 2. Dynamically add the SSL requirement ONLY if it is explicitly set in the environment
+if hasattr(settings, 'DB_SSL_MODE') and settings.DB_SSL_MODE:
+    db_connect_args["ssl"] = settings.DB_SSL_MODE
+
+# 3. Create async engine.
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    # Strip sslmode from the URL string so asyncpg doesn't crash
+    settings.DATABASE_URL.replace("?sslmode=require", ""),
     echo=settings.DEBUG,
     future=True,
     pool_pre_ping=True,
-    connect_args={
-        "statement_cache_size": 0,
-        # This will look for a variable in your .env, or default to False locally
-        "ssl": settings.DB_SSL_MODE if hasattr(settings, 'DB_SSL_MODE') else False,
-    },
+    connect_args=db_connect_args, # Pass the dynamically built dictionary once
 )
 
 # Session factory
