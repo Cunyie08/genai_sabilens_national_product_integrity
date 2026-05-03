@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { X, Image, ArrowRight, Check, AlertCircle, CameraOff, Flashlight, RotateCcw } from 'lucide-react';
 import { scanApi } from '../../../services/api';
@@ -7,7 +6,6 @@ import { scanApi } from '../../../services/api';
 import useMediaPipeDetection from '../../../hooks/useMediaPipeDetection';
 import useGeolocation from '../../../hooks/useGeolocation';
 import { saveScan, markRefreshNeeded } from '../../../services/scanHistory';
-import { QRCodeSVG } from 'qrcode.react';
 
 const TOTAL_PHASES = 2;
 
@@ -87,13 +85,6 @@ const ScanScreen = ({ sessionId = null }) => {
   // Geolocation — hook auto-fetches on mount; no manual trigger needed.
   const { locationData, locationStatus, locationError, locationErrorCode, retryLocation } = useGeolocation();
   const [showLocationDenied, setShowLocationDenied] = useState(false);
-  const [isQRModalOpen,      setIsQRModalOpen]      = useState(false);
-  const [qrOpenError,        setQROpenError]        = useState(null);
-  const [qrMobileUrl,        setQRMobileUrl]        = useState(null);
-  const [qrSessionId,        setQRSessionId]        = useState(null);
-  const [qrStatus,           setQRStatus]           = useState('idle');
-  const [phoneGPSReceived,   setPhoneGPSReceived]   = useState(false);
-  const qrWsRef = useRef(null);
   // Mirror locationData and error code in refs so startScan (useCallback)
   // always reads the latest values without needing them in its dependency array.
   const locationDataRef     = useRef(null);
@@ -273,112 +264,6 @@ const ScanScreen = ({ sessionId = null }) => {
       setScanning(false);
     }
   }, [navigate]);
-
-  // ── QR modal result handler ───────────────────────────────────────────────
-  const handleQRResult = useCallback((data) => {
-    const verdict = data.verdict || data.final_verdict || 'FAKE';
-    sessionStorage.setItem('currentScan', JSON.stringify({
-      productImage:       data.image_url || null,
-      backImage:          data.back_image_url || null,
-      imageUrl:           data.image_url || null,
-      isAuthentic:        verdict === 'AUTHENTIC',
-      isSuspicious:       verdict === 'SUSPICIOUS',
-      isRescanRequired:   verdict === 'RESCAN_REQUIRED',
-      aiResult:           data,
-      location:           '',
-      latitude:           0,
-      longitude:          0,
-      category:           'unknown',
-      scan_id:            data.scan_id || '',
-      displayConfidence:  data.display_confidence ?? null,
-      confidenceLabel:    data.confidence_label ?? '',
-      simpleInstruction:  data.simple_instruction ?? '',
-    }));
-    if (verdict === 'AUTHENTIC')        { navigate('/scan/safe');      return; }
-    if (verdict === 'SUSPICIOUS')       { navigate('/scan/suspicious'); return; }
-    if (verdict === 'RESCAN_REQUIRED')  { navigate('/scan/rescan');     return; }
-    navigate('/scan/fake');
-  }, [navigate]);
-
-  const openQRSession = useCallback(async () => {
-    setIsQRModalOpen(true);
-    setQRStatus('creating');
-    setQROpenError(null);
-    setQRMobileUrl(null);
-    setQRSessionId(null);
-    qrWsRef.current?.close();
-    qrWsRef.current = null;
-
-    try {
-      const res = await scanApi.createSession();
-      const { session_id } = res.data;
-      // Build the URL the phone will open using the current host, not localhost.
-      // This is the fix for the "localhost trap" — the backend's FRONTEND_URL
-      // is always localhost:5173, but the phone needs the real network address.
-      const mobileUrl = `${window.location.origin}/mobile-scan/${session_id}`;
-      setQRMobileUrl(mobileUrl);
-      setQRSessionId(session_id);
-      setQRStatus('ready');
-
-      const baseWs = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/^http/, 'ws');
-      const ws = new WebSocket(`${baseWs}/api/v1/scan/session/${session_id}/ws`);
-      qrWsRef.current = ws;
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          setQRStatus('complete');
-          handleQRResult(data);
-        } catch {}
-      };
-      ws.onerror = () => setQRStatus('error');
-      ws.onclose = () => { if (qrWsRef.current === ws) qrWsRef.current = null; };
-    } catch (err) {
-      setQROpenError(err?.message || 'Cannot connect to server. Is the backend running?');
-      setQRStatus('error');
-    }
-  }, [handleQRResult]);
-
-  // ── Polling — fires every 2.5 s while QR modal is open ───────────────────
-  // Handles two completion paths:
-  //   location_ready  — phone shared GPS; desktop can now proceed with camera scan
-  //   complete        — legacy path if phone does full scan (WebSocket fallback)
-  useEffect(() => {
-    if (!isQRModalOpen || !qrSessionId || qrStatus === 'complete') return;
-
-    const id = setInterval(async () => {
-      try {
-        const res = await scanApi.getSessionStatus(qrSessionId);
-        const { status, latitude, longitude, result } = res.data ?? {};
-
-        if (status === 'location_ready') {
-          clearInterval(id);
-          // Inject phone's accurate GPS into the refs startScan reads from
-          geoRef.current          = { latitude, longitude, address: '' };
-          locationDataRef.current = { latitude, longitude };
-          setPhoneGPSReceived(true);
-          setIsQRModalOpen(false);
-          setQRStatus('idle');
-          setQRSessionId(null);
-          setQRMobileUrl(null);
-
-        } else if (status === 'complete' && result) {
-          clearInterval(id);
-          setQRStatus('complete');
-          handleQRResult(result);
-
-        } else if (status === 'expired') {
-          clearInterval(id);
-          setQRStatus('error');
-          setQROpenError('Session expired. Please tap "Try Again".');
-        }
-      } catch {
-        // network blip — keep polling
-      }
-    }, 2500);
-
-    return () => clearInterval(id);
-  }, [isQRModalOpen, qrSessionId, qrStatus, handleQRResult]);
 
   // ── Backend Product Detection ─────────────────────────────────────────────
   const checkProductExists = useCallback(async (imageDataUrl, phase) => {
@@ -568,10 +453,22 @@ const ScanScreen = ({ sessionId = null }) => {
     }
     try {
       if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      });
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { exact: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+      } catch (e) {
+        if (e.name === 'OverconstrainedError' || e.name === 'ConstraintNotSatisfiedError') {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false,
+          });
+        } else {
+          throw e;
+        }
+      }
       streamRef.current = stream;
       const video = videoRef.current;
       if (!video) { stream.getTracks().forEach((t) => t.stop()); return; }
@@ -616,8 +513,6 @@ const ScanScreen = ({ sessionId = null }) => {
       stopScan();
       clearGuidance();
       if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
-      qrWsRef.current?.close();
-      qrWsRef.current = null;
     };
   }, []);
 
@@ -696,12 +591,7 @@ const ScanScreen = ({ sessionId = null }) => {
 
   // On desktop, MediaPipe detection is irrelevant — the phone does the scan via QR.
   // Always enable the button on desktop so startScan can immediately show the QR overlay.
-  const isDesktop = window.innerWidth >= 768;
-  // After the phone shares its GPS, desktop unlocks the camera scan button
-  // with the same requirements as mobile (product must be in frame, etc.).
-  const canStartScan = (!isDesktop || phoneGPSReceived)
-    ? cameraActive && detectionState.hasObject && !scanning && !submitting && !showNextPrompt && !waitingForContinue && !isModelLoading && !showProductPreview && !showSuccessGuide
-    : false;
+  const canStartScan = cameraActive && detectionState.hasObject && !scanning && !submitting && !showNextPrompt && !waitingForContinue && !isModelLoading && !showProductPreview && !showSuccessGuide;
 
   const getGuidanceMessage = () => {
     if (showGuidancePhase) {
@@ -975,99 +865,6 @@ const ScanScreen = ({ sessionId = null }) => {
         );
       })()}
 
-      {/* ── QR MODAL — rendered via portal directly into document.body so no
-           parent stacking context can ever hide it ────────────────────────── */}
-      {isQRModalOpen && createPortal(
-        <div
-          style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.9)' }}
-        >
-          <div style={{ background: '#fff', borderRadius: 16, padding: 32, width: '100%', maxWidth: 384, margin: '0 16px', position: 'relative', boxShadow: '0 25px 50px rgba(0,0,0,0.4)' }}>
-
-            {/* Close button */}
-            <button
-              onClick={() => {
-                setIsQRModalOpen(false);
-                qrWsRef.current?.close();
-                qrWsRef.current = null;
-                setQRStatus('idle');
-                setQRMobileUrl(null);
-                setQRSessionId(null);
-                setQROpenError(null);
-              }}
-              style={{ position: 'absolute', top: 16, right: 16, width: 32, height: 32, borderRadius: '50%', background: '#f3f4f6', border: 'none', cursor: 'pointer', fontSize: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280' }}
-              aria-label="Close"
-            >
-              ×
-            </button>
-
-            {/* Creating session — spinner */}
-            {qrStatus === 'creating' && (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 0', gap: 16 }}>
-                <div className="w-10 h-10 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
-                <p style={{ color: '#6b7280', fontSize: 14 }}>Generating QR code…</p>
-              </div>
-            )}
-
-            {/* QR ready */}
-            {qrStatus === 'ready' && (
-              <>
-                <div style={{ textAlign: 'center', marginBottom: 24 }}>
-                  <h2 style={{ fontSize: 20, fontWeight: 700, color: '#111827', margin: '0 0 8px' }}>Scan on your phone</h2>
-                  <p style={{ color: '#6b7280', fontSize: 14, lineHeight: 1.5, margin: 0 }}>
-                    Your computer doesn't have accurate GPS. Scan this QR code with your phone to verify the product.
-                  </p>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
-                  <div style={{ padding: 12, border: '2px solid #e5e7eb', borderRadius: 12 }}>
-                    <QRCodeSVG value={qrMobileUrl} size={180} level="M" />
-                  </div>
-                </div>
-
-                <div style={{ background: '#f9fafb', borderRadius: 12, padding: 12, marginBottom: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-                  <p style={{ fontSize: 12, color: '#6b7280', margin: 0 }}>Waiting for phone scan…</p>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    {[0, 150, 300].map((d) => (
-                      <div key={d} className="w-2 h-2 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
-                    ))}
-                  </div>
-                </div>
-
-                <p style={{ fontSize: 12, color: '#9ca3af', textAlign: 'center', margin: 0 }}>QR code expires in 5 minutes</p>
-              </>
-            )}
-
-            {/* Result received */}
-            {qrStatus === 'complete' && (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 0', gap: 16 }}>
-                <div style={{ width: 64, height: 64, background: '#dcfce7', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Check size={32} color="#16a34a" />
-                </div>
-                <p style={{ fontWeight: 600, fontSize: 18, color: '#1f2937', margin: 0 }}>Scan received!</p>
-                <p style={{ color: '#6b7280', fontSize: 14, margin: 0 }}>Loading results…</p>
-              </div>
-            )}
-
-            {/* Error */}
-            {qrStatus === 'error' && (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 0', gap: 16 }}>
-                <AlertCircle size={40} color="#ef4444" />
-                <p style={{ color: '#ef4444', fontSize: 14, textAlign: 'center', margin: 0 }}>
-                  {qrOpenError || 'Could not create scan session. Check your connection and try again.'}
-                </p>
-                <button
-                  onClick={openQRSession}
-                  style={{ padding: '8px 24px', borderRadius: 12, background: '#22c55e', color: '#fff', fontWeight: 600, fontSize: 14, border: 'none', cursor: 'pointer' }}
-                >
-                  Try Again
-                </button>
-              </div>
-            )}
-
-          </div>
-        </div>,
-        document.body
-      )}
 
       {/* ── SUCCESS GUIDE OVERLAY (after front panel keep) ── */}
       {showSuccessGuide && (
