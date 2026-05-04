@@ -51,7 +51,7 @@ from backend.services.notification_service import NotificationService
 from backend.utils.response import success_response, error_response, paginated_response
 from backend.core.security import verify_password, create_access_token, create_refresh_token
 
-router = APIRouter(prefix="/api/nafdac", tags=["NAFDAC"])
+router = APIRouter(prefix="/nafdac", tags=["NAFDAC"])
 
 # ─── Export directory ─────────────────────────────────────
 EXPORT_DIR = "/tmp/sabilens_exports"

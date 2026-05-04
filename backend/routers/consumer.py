@@ -38,7 +38,7 @@ from backend.dependencies import get_optional_user, get_current_user
 
 logger = logging.getLogger("consumer.router")
 
-router = APIRouter(prefix="/api/consumer", tags=["Consumer"])
+router = APIRouter(prefix="/consumer", tags=["Consumer"])
 
 # Thread pool for blocking Cloudinary uploads
 _upload_executor = ThreadPoolExecutor(max_workers=2)
@@ -311,9 +311,15 @@ async def detect_product(
         # Save temporarily to disk for OCR processing
         with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
             pil_image = Image.open(BytesIO(image_bytes))
-            # Convert RGBA to RGB if needed
-            if pil_image.mode == 'RGBA':
-                pil_image = pil_image.convert('RGB')
+            # Convert all formats (RGBA, LA, etc) to RGB for JPEG saving
+            if pil_image.mode != 'RGB':
+                # Handle images with transparency by pasting onto white background
+                if pil_image.mode in ('RGBA', 'LA'):
+                    background = Image.new('RGB', pil_image.size, (255, 255, 255))
+                    background.paste(pil_image, mask=pil_image.split()[-1])
+                    pil_image = background
+                else:
+                    pil_image = pil_image.convert('RGB')
             pil_image.save(tmp_file.name, 'JPEG', quality=85)
             temp_path = tmp_file.name
         

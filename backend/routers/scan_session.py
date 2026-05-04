@@ -22,7 +22,7 @@ logger = logging.getLogger("scan_session")
 
 SESSION_TTL_SECONDS = 300  # 5 min — long enough for the phone to complete the scan
 
-router = APIRouter(prefix="/api/v1/scan", tags=["Scan Session"])
+router = APIRouter(prefix="/v1/scan", tags=["Scan Session"])
 
 # ── In-process session store ──────────────────────────────────────────────────
 # { session_id: {"status": str, "queue": asyncio.Queue, ...} }
