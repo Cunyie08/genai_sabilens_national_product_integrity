@@ -21,7 +21,7 @@ if hasattr(settings, 'DB_SSL_MODE') and settings.DB_SSL_MODE:
 # 3. Create async engine.
 engine = create_async_engine(
     # Strip sslmode from the URL string so asyncpg doesn't crash
-    settings.DATABASE_URL.replace("?sslmode=require", ""),
+    settings.DATABASE_URL.replace("?sslmode=require", "").replace("?sslmode=disable", ""),
     echo=settings.DEBUG,
     future=True,
     pool_pre_ping=True,

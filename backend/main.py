@@ -33,9 +33,10 @@ app = FastAPI(
     version=settings.APP_VERSION,
     description="API for NAFDAC workflows, product verification, and location services.",
     lifespan=lifespan,
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
+    root_path="/api",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
 )
 
 app.add_middleware(
@@ -52,15 +53,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(auth_router, prefix="/api/v1/auth")
+# Include routers without /api prefix
+app.include_router(auth_router, prefix="/v1/auth")
 app.include_router(consumer_router)
 app.include_router(nafdac_router)
 app.include_router(shared_router)
 app.include_router(scan_session_router)
-app.include_router(company_router,     prefix="/api/v1/admin/company", tags=["Company Admin"])
-app.include_router(nafdac_admin_router, prefix="/api/v1/admin/nafdac",  tags=["NAFDAC Admin"])
-app.include_router(super_admin_router,  prefix="/api/v1/admin/super",   tags=["Super Admin"])
+app.include_router(company_router,      prefix="/v1/admin/company", tags=["Company Admin"])
+app.include_router(nafdac_admin_router, prefix="/v1/admin/nafdac",  tags=["NAFDAC Admin"])
+app.include_router(super_admin_router,  prefix="/v1/admin/super",   tags=["Super Admin"])
 
 
 @app.get("/", tags=["Health"])
@@ -75,5 +76,5 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    # 0.0.0.0 binds to all interfaces so phones on the same Wi-Fi can connect.
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=settings.DEBUG)
+    # Bind to 127.0.0.1 instead of 0.0.0.0 to prevent Nginx IPv6 loopback errors
+    uvicorn.run(app, host="127.0.0.1", port=8000, reload=settings.DEBUG)
