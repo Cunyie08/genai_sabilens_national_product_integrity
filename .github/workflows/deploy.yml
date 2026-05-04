@@ -1,4 +1,4 @@
-#Changes made to deploy.yml to bypass the folder error and allow deployment without running tests first. The 'needs' dependency on the test job has been commented out, and the test job itself is also commented out until the tests folder is created.
+# Changes made to deploy.yml to bypass folder errors and fix permission issues on the remote host.
 name: Deploy to GCE
 
 on:
@@ -29,8 +29,6 @@ jobs:
         id: auth
         uses: google-github-actions/auth@v2
         with:
-          # CRITICAL: This ensures the token is generated in a format 
-          # that 'gcloud secrets' can use for impersonation.
           token_format: 'access_token' 
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
@@ -46,6 +44,15 @@ jobs:
             --project="$PROJECT_ID" \
             > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+
+      - name: Fix Remote Permissions
+        run: |
+          ssh \
+            -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o ProxyCommand="gcloud compute start-iap-tunnel %h 22 --listen-on-stdin --zone=${GCE_ZONE} --project=${PROJECT_ID}" \
+            deployer@"${GCE_INSTANCE}" \
+            "sudo chown -R deployer:deployer /opt/sabilens && sudo chmod -R 775 /opt/sabilens"
 
       - name: Deploy via IAP SSH Tunnel
         run: |
