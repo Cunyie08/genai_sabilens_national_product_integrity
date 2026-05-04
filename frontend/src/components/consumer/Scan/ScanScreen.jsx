@@ -49,6 +49,9 @@ const detectProductCategory = () => 'unknown';
 
 const ScanScreen = ({ sessionId = null }) => {
   const navigate = useNavigate();
+  const isDesktop = window.innerWidth >= 1024;
+  const [phoneGPSReceived, setPhoneGPSReceived] = useState(false);
+  const openQRSession = () => {};
 
   // Camera state
   const [cameraActive, setCameraActive] = useState(false);
