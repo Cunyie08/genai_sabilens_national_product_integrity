@@ -29,9 +29,44 @@ DISTANCE METRIC: cosine
   a 0–1 similarity score for downstream scoring.
 """
 
+import os
+import sqlite3
+
 import chromadb
 from ai_engine.rag_system.config.settings import settings
 from ai_engine.rag_system.ingestion.schema import ProductChunk
+
+
+def _apply_schema_migration(persist_dir: str) -> None:
+    """
+    Add columns that ChromaDB 0.4.x expects but older database files lack.
+
+    The `topic` column was introduced in ChromaDB 0.4.x for the SQLite-backed
+    embeddings queue.  Databases created with ChromaDB <0.4.0 don't have it,
+    so opening them with 0.4.24 raises "no such column: collections.topic".
+
+    This runs before PersistentClient opens the file, so ChromaDB sees a
+    compatible schema on its first read.  It is a no-op when the database is
+    fresh or already migrated.
+    """
+    db_path = os.path.join(persist_dir, "chroma.sqlite3")
+    if not os.path.exists(db_path):
+        return  # New database — ChromaDB will create it with the correct schema.
+    try:
+        with sqlite3.connect(db_path) as conn:
+            existing_cols = {
+                row[1] for row in conn.execute("PRAGMA table_info(collections)")
+            }
+            if "topic" not in existing_cols:
+                conn.execute("ALTER TABLE collections ADD COLUMN topic TEXT")
+                conn.commit()
+                print(
+                    "[ChromaStore] Schema migration applied: "
+                    "added 'topic' column to collections table."
+                )
+    except Exception as exc:
+        # Non-fatal: log and let PersistentClient raise the real error if needed.
+        print(f"[ChromaStore] Schema migration warning (non-fatal): {exc}")
 
 
 class ChromaStore:
@@ -51,6 +86,9 @@ class ChromaStore:
     """
 
     def __init__(self):
+        # Fix any schema mismatch before PersistentClient opens the SQLite file.
+        _apply_schema_migration(settings.CHROMA_PERSIST_DIR)
+
         # PersistentClient persists all data to disk.
         # Safe to instantiate multiple times — returns the same client for the
         # same path (ChromaDB manages the singleton internally).
