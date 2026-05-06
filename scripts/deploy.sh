@@ -18,14 +18,14 @@ PROJECT_ID=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/projec
   -H "Metadata-Flavor: Google")
 
 # ─── 1. Pull Latest Code ──────────────────────────────────────────────────────
-log "Step 1/7 — Pulling latest code..."
+log "Step 1/8 — Pulling latest code..."
 cd "$APP_DIR"
 git fetch --all --prune
 git reset --hard origin/master
 log "Code updated → $(git rev-parse --short HEAD) ($(git log -1 --format='%s'))"
 
 # ─── 2. Activate Virtual Environment ─────────────────────────────────────────
-log "Step 2/7 — Preparing virtual environment..."
+log "Step 2/8 — Preparing virtual environment..."
 if [[ ! -d "$VENV" ]]; then
   log "  Creating new venv with $PYTHON"
   "$PYTHON" -m venv "$VENV"
@@ -34,7 +34,7 @@ fi
 source "$VENV/bin/activate"
 
 # ─── 3. Install / Upgrade Dependencies ───────────────────────────────────────
-log "Step 3/7 — Installing dependencies..."
+log "Step 3/8 — Installing dependencies..."
 pip install --upgrade pip --quiet
 pip install -r requirements.txt -r backend/requirements.txt --quiet
 log "  Dependencies up to date"
@@ -42,7 +42,7 @@ log "  Dependencies up to date"
 # ─── 4. Fetch .env from Secret Manager ───────────────────────────────────────
 # The VM's attached service account has roles/secretmanager.secretAccessor.
 # The secret payload is the raw .env file content — no encoding needed.
-log "Step 4/7 — Fetching .env from Secret Manager (secret: $SECRET_NAME)..."
+log "Step 4/8 — Fetching .env from Secret Manager (secret: $SECRET_NAME)..."
 gcloud secrets versions access latest \
   --secret="$SECRET_NAME" \
   --project="$PROJECT_ID" \
@@ -50,8 +50,30 @@ gcloud secrets versions access latest \
 chmod 600 "$ENV_FILE"
 log "  .env updated ($(wc -l < "$ENV_FILE") lines)"
 
-# ─── 5. Run Database Migrations ──────────────────────────────────────────────
-log "Step 5/7 — Running Alembic migrations..."
+# ─── 5. Install Nginx Upload Limits ──────────────────────────────────────────
+# Raises client_max_body_size from the 1 MB default to 20 MB so the scan
+# endpoint can receive two base64-encoded images in a single JSON body.
+# Also sets proxy timeouts to match the 120 s backend scan timeout.
+# Non-fatal: if sudo permissions or nginx paths differ, deployment continues.
+log "Step 5/8 — Installing Nginx upload limits..."
+NGINX_CONF_SRC="$APP_DIR/infra/nginx/sabilens-limits.conf"
+NGINX_CONF_DST="/etc/nginx/conf.d/sabilens-limits.conf"
+_NGINX_OK=0
+set +e
+sudo cp "$NGINX_CONF_SRC" "$NGINX_CONF_DST" 2>/dev/null && \
+  sudo nginx -t 2>/dev/null && \
+  sudo systemctl reload nginx 2>/dev/null && \
+  _NGINX_OK=1
+set -e
+if [[ $_NGINX_OK -eq 1 ]]; then
+  log "  Nginx upload limits installed and applied"
+else
+  log "WARNING: Nginx config install failed (non-fatal). Run manually:"
+  log "  sudo cp $NGINX_CONF_SRC $NGINX_CONF_DST && sudo nginx -t && sudo systemctl reload nginx"
+fi
+
+# ─── 6. Run Database Migrations ──────────────────────────────────────────────
+log "Step 6/8 — Running Alembic migrations..."
 
 # CRITICAL FIX: Move into the backend folder where alembic.ini and the alembic folder live
 cd "$APP_DIR/backend"
@@ -73,18 +95,18 @@ fi
 # Return to root directory for the remainder of the script
 cd "$APP_DIR"
 
-# ─── 6. Rebuild ChromaDB vector store ────────────────────────────────────────
+# ─── 7. Rebuild ChromaDB vector store ────────────────────────────────────────
 # Delete the persisted database so ingestion always rebuilds it with the schema
 # that matches the currently installed chromadb version.  The database is
 # generated from data/raw/nafdac_database.xlsx and takes under a minute to rebuild.
-log "Step 6/7 — Rebuilding ChromaDB vector store..."
+log "Step 7/8 — Rebuilding ChromaDB vector store..."
 cd "$APP_DIR"
 rm -rf chroma_db
 python -m ai_engine.rag_system.main --mode ingest
 log "  ChromaDB rebuilt"
 
-# ─── 7. Restart Services and Verify ──────────────────────────────────────────
-log "Step 7/7 — Restarting services: ${SERVICES[*]}"
+# ─── 8. Restart Services and Verify ──────────────────────────────────────────
+log "Step 8/8 — Restarting services: ${SERVICES[*]}"
 sudo systemctl restart "${SERVICES[@]}"
 
 sleep 4  # Give services time to reach their steady state
@@ -105,4 +127,4 @@ if [[ ${#FAILED[@]} -gt 0 ]]; then
   exit 1
 fi
 
-log "=== Deployment complete (7/7 steps) ==="
+log "=== Deployment complete (8/8 steps) ==="

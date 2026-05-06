@@ -48,14 +48,19 @@ const emptyImages = { 0: null, 1: null };
 const detectProductCategory = () => 'unknown';
 
 // Gallery images from the device can be 5-15 MB as raw base64.  Sending
-// that over mobile as a JSON body reliably hits Nginx's body-size limit and
-// stalls slow connections.  This helper caps the longest side at 1280 px and
-// re-encodes as JPEG 0.82, bringing a typical gallery photo under 300 KB.
+// that over mobile as a JSON body reliably hits Nginx's 1 MB default body-size
+// limit (the frontend sends TWO images — front + back — in a single request).
+// Camera captures are typically 640×480 from the browser stream; gallery photos
+// shot with a phone camera are 12–48 MP portrait shots.  After resizing to
+// 1280 px the portrait dimension stays at ~960×1280, making each base64 blob
+// 400–600 KB — two images can exceed 1 MB and get rejected with HTTP 413.
+// This helper caps the longest side at 960 px and re-encodes at JPEG 0.75,
+// keeping each image under ~200 KB and both images comfortably under 500 KB.
 function resizeGalleryImage(dataUrl) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const img = new window.Image();
     img.onload = () => {
-      const MAX_PX = 1280;
+      const MAX_PX = 960;
       const scale = Math.min(1, MAX_PX / Math.max(img.naturalWidth, img.naturalHeight));
       const w = Math.round(img.naturalWidth  * scale);
       const h = Math.round(img.naturalHeight * scale);
@@ -63,8 +68,9 @@ function resizeGalleryImage(dataUrl) {
       canvas.width  = w;
       canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      resolve(canvas.toDataURL('image/jpeg', 0.82));
+      resolve(canvas.toDataURL('image/jpeg', 0.75));
     };
+    img.onerror = () => reject(new Error('Could not load image for resizing'));
     img.src = dataUrl;
   });
 }
@@ -173,15 +179,15 @@ const ScanScreen = ({ sessionId = null }) => {
   // ── Error Messages ─────────────────────────────────────────────────────────
   const getUserFriendlyErrorMessage = (error) => {
     const message = error?.message?.toLowerCase() || '';
-    const status = error?.status;
     if (!navigator.onLine || message.includes('network') || message.includes('fetch') || message.includes('failed to fetch')) return 'No internet connection. Please check your network and try again.';
     if (message.includes('timeout') || message.includes('timed out')) return 'Request timed out. Please check your connection and try again.';
-    if (status === 500 || message.includes('internal server error')) return 'Our servers are experiencing issues. Please try again in a few minutes.';
-    if (status === 503 || message.includes('unavailable')) return 'Service temporarily unavailable. Please try again later.';
-    if (status === 429 || message.includes('too many')) return 'Too many scan requests. Please wait a moment before trying again.';
+    if (message.includes('413') || message.includes('too large') || message.includes('request entity')) return 'Image too large to upload. Please try again — the image will be compressed automatically.';
+    if (message.includes('internal server error') || message.includes('500')) return 'Our servers are experiencing issues. Please try again in a few minutes.';
+    if (message.includes('unavailable') || message.includes('503')) return 'Service temporarily unavailable. Please try again later.';
+    if (message.includes('too many') || message.includes('429')) return 'Too many scan requests. Please wait a moment before trying again.';
     if (message.includes('blurry') || message.includes('unclear') || message.includes('quality')) return 'The image is unclear. Please ensure the product is well-lit and the label is readable.';
     if (message.includes('nafdac') && (message.includes('not found') || message.includes('missing'))) return 'The NAFDAC number was not found. Please ensure the back/side label is clearly visible.';
-    if (status === 401 || message.includes('unauthorized') || message.includes('token')) return 'Your session has expired. Please log in again to continue.';
+    if (message.includes('unauthorized') || message.includes('token') || message.includes('401')) return 'Your session has expired. Please log in again to continue.';
     return 'Unable to analyze the product. Please try again with a clearer image.';
   };
 
@@ -587,8 +593,12 @@ const ScanScreen = ({ sessionId = null }) => {
     const slot = uploadSlotRef.current;
     const reader = new FileReader();
     reader.onload = async () => {
-      const resized = await resizeGalleryImage(reader.result);
-      setUploadSlots(prev => ({ ...prev, [slot]: resized }));
+      try {
+        const resized = await resizeGalleryImage(reader.result);
+        setUploadSlots(prev => ({ ...prev, [slot]: resized }));
+      } catch {
+        setSubmitError('Could not load this image. Please try a JPEG or PNG file.');
+      }
     };
     reader.readAsDataURL(file);
   }, []);
