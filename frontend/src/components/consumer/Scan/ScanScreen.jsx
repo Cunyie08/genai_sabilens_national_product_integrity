@@ -976,6 +976,15 @@ const ScanScreen = ({ sessionId = null }) => {
                     <CameraOff size={28} className="mx-auto mb-2 text-white/20" />
                     <p className="text-white text-xs font-semibold mb-1">Camera Access Denied</p>
                     <p className="text-white/40 text-[10px] mb-3">{cameraError}</p>
+                    <div className="bg-white/5 rounded-xl p-3 mb-3 border border-white/10 text-left">
+                      <p className="text-white/50 text-[10px] leading-relaxed">
+                        <span className="text-amber-400 font-semibold block mb-1">How to re-enable camera:</span>
+                        Tap the lock icon in your browser address bar →{' '}
+                        <span className="text-white/70">Site settings</span> →{' '}
+                        <span className="text-white/70">Camera</span> →{' '}
+                        <span className="text-green-400 font-semibold">Allow</span>, then tap Retry.
+                      </p>
+                    </div>
                     <button onClick={startCamera} className="px-4 py-1.5 bg-green-500 rounded-lg text-[10px] font-semibold text-white">Retry</button>
                   </div>
                 )}
