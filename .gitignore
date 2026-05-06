@@ -71,3 +71,7 @@ app.db
 generate_privacy_policy_pdf
 PRIVACY_POLICY
 SabiLens_Privacy_Policy
+
+#
+.claude
+Sabilens_Cloud_Instance_ System_Documentation.pdf
