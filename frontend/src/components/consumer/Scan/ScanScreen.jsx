@@ -4,6 +4,7 @@ import { X, Image, ArrowRight, Check, AlertCircle, CameraOff, Flashlight, Rotate
 import { scanApi } from '../../../services/api';
 // import { saveScan } from '../../../services/scanHistory';
 import useMediaPipeDetection from '../../../hooks/useMediaPipeDetection';
+import useGeolocation from '../../../hooks/useGeolocation';
 import { saveScan, markRefreshNeeded } from '../../../services/scanHistory';
 
 const TOTAL_PHASES = 2;
@@ -46,8 +47,11 @@ const emptyImages = { 0: null, 1: null };
 
 const detectProductCategory = () => 'unknown';
 
-const ScanScreen = () => {
+const ScanScreen = ({ sessionId = null }) => {
   const navigate = useNavigate();
+  const isDesktop = window.innerWidth >= 1024;
+  const [phoneGPSReceived, setPhoneGPSReceived] = useState(false);
+  const openQRSession = () => {};
 
   // Camera state
   const [cameraActive, setCameraActive] = useState(false);
@@ -80,6 +84,15 @@ const ScanScreen = () => {
 
   // NEW: Success guide overlay state
   const [showSuccessGuide, setShowSuccessGuide] = useState(false);
+
+  // Geolocation — hook auto-fetches on mount; no manual trigger needed.
+  const { locationData, locationStatus, locationError, locationErrorCode, retryLocation } = useGeolocation();
+  const [showLocationDenied, setShowLocationDenied] = useState(false);
+  // Mirror locationData and error code in refs so startScan (useCallback)
+  // always reads the latest values without needing them in its dependency array.
+  const locationDataRef     = useRef(null);
+  const locationStatusRef   = useRef('idle');
+  const locationErrorCodeRef = useRef(null);
 
   // Scanning line state
   const [linePosition, setLinePosition] = useState(0);
@@ -114,6 +127,26 @@ const ScanScreen = () => {
   );
 
   const detectionFeedback = getDetailedFeedback();
+
+  // ── Geolocation sync ──────────────────────────────────────────────────────
+  // Keep all refs in sync whenever the hook resolves.
+  // Auto-dismiss any location overlay when the fix arrives.
+  useEffect(() => {
+    locationStatusRef.current    = locationStatus;
+    locationErrorCodeRef.current = locationErrorCode;
+  }, [locationStatus, locationErrorCode]);
+
+  useEffect(() => {
+    if (locationData) {
+      locationDataRef.current = locationData;
+      geoRef.current = {
+        latitude:  locationData.latitude,
+        longitude: locationData.longitude,
+        address:   geoRef.current.address || '',
+      };
+      if (showLocationDenied) setShowLocationDenied(false);
+    }
+  }, [locationData, showLocationDenied]);
 
   // ── Error Messages ─────────────────────────────────────────────────────────
   const getUserFriendlyErrorMessage = (error) => {
@@ -166,6 +199,7 @@ const ScanScreen = () => {
         latitude: geo.latitude,
         longitude: geo.longitude,
         location_text: geo.address || '',
+        ...(sessionId ? { session_id: sessionId } : {}),
       };
       const response = await scanApi.submitScan(payload);
       const data = response.data || {};
@@ -211,6 +245,13 @@ const ScanScreen = () => {
         simpleInstruction: data.simple_instruction || ''
       }));
       
+      // Phone scan in QR handoff mode — result was already published to the
+      // desktop via Redis; just show a done page here instead of navigating.
+      if (sessionId) {
+        navigate('/mobile-scan/done');
+        return;
+      }
+
       if (verdict === 'AUTHENTIC') {
         navigate('/scan/safe');
       } else if (verdict === 'SUSPICIOUS') {
@@ -360,8 +401,13 @@ const ScanScreen = () => {
   }, []);
 
   const startScan = useCallback(() => {
+    // Mobile: GPS is accurate. Block if location hasn't resolved yet.
+    if (!locationDataRef.current) {
+      setShowLocationDenied(true);
+      return;
+    }
     if (!cameraActive) { setCameraError('Please enable camera access to start scanning.'); return; }
-    if (!detectionState.hasObject) { 
+    if (!detectionState.hasObject) {
       setSubmitError('Please position a product in the frame before scanning.');
       return;
     }
@@ -410,10 +456,22 @@ const ScanScreen = () => {
     }
     try {
       if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      });
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { exact: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+      } catch (e) {
+        if (e.name === 'OverconstrainedError' || e.name === 'ConstraintNotSatisfiedError') {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false,
+          });
+        } else {
+          throw e;
+        }
+      }
       streamRef.current = stream;
       const video = videoRef.current;
       if (!video) { stream.getTracks().forEach((t) => t.stop()); return; }
@@ -454,17 +512,6 @@ const ScanScreen = () => {
   // Initialize camera
   useEffect(() => {
     startCamera();
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-          geoRef.current = { latitude: lat, longitude: lng, address: `${lat.toFixed(5)}° N, ${lng.toFixed(5)}° E` };
-        },
-        () => {},
-        { enableHighAccuracy: true, timeout: 10000 },
-      );
-    }
     return () => {
       stopScan();
       clearGuidance();
@@ -545,6 +592,8 @@ const ScanScreen = () => {
 
   const currentPhaseData = scanPhases[currentPhase] ?? scanPhases[0];
 
+  // On desktop, MediaPipe detection is irrelevant — the phone does the scan via QR.
+  // Always enable the button on desktop so startScan can immediately show the QR overlay.
   const canStartScan = cameraActive && detectionState.hasObject && !scanning && !submitting && !showNextPrompt && !waitingForContinue && !isModelLoading && !showProductPreview && !showSuccessGuide;
 
   const getGuidanceMessage = () => {
@@ -555,6 +604,10 @@ const ScanScreen = () => {
   };
 
   const getHintMessage = () => {
+    if (isDesktop && !phoneGPSReceived && !scanning && !submitting)
+      return 'Tap "Use Phone" to share your phone\'s GPS, then scan the product.';
+    if (isDesktop && phoneGPSReceived && !detectionState.hasObject && !scanning && !submitting)
+      return '📍 Phone GPS received! Position the product in frame, then tap Scan.';
     if (submitError) return submitError;
     if (submitting) return 'SabiLens AI is analysing…';
     if (showProductPreview && productCheckLoading) return 'Checking for product...';
@@ -736,6 +789,85 @@ const ScanScreen = () => {
           )}
         </div>
       )}
+
+      {/* ── LOCATION OVERLAY ─────────────────────────────────────────────────── */}
+      {/* Only renders when the user tapped Scan before location was ready.      */}
+      {/* Auto-dismisses via the locationData useEffect when the fix arrives.    */}
+      {showLocationDenied && !locationData && (() => {
+        const inFlight = locationStatus === 'fetching';
+
+        const heading = {
+          fetching: 'Getting Your Location…',
+          error:    'Location Required',
+          idle:     'Getting Your Location…',
+        }[locationStatus] ?? 'Location Required';
+
+        const body = {
+          fetching: 'Requesting a GPS fix in the background. This usually takes just a moment…',
+          error:    locationError ?? 'Location is required to scan. Please enable it and try again.',
+          idle:     'Requesting your location…',
+        }[locationStatus] ?? 'SabiLens needs your location to help NAFDAC track counterfeit hotspots.';
+
+        // Show browser-settings card only for permission denial (the error message
+        // already tells the user to check their address bar, but the card makes
+        // the steps impossible to miss).
+        const showSettingsCard = locationStatus === 'error' &&
+          locationError?.includes('blocked');
+
+        return (
+          <div className="absolute inset-0 z-50 flex flex-col bg-black/97 backdrop-blur-md items-center justify-center px-6 animate-fadeIn">
+            <div className="text-center w-full max-w-[320px]">
+
+              <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 ${inFlight ? 'bg-green-500/15' : 'bg-red-500/15'}`}>
+                {inFlight
+                  ? <div className="w-10 h-10 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+                  : <AlertCircle size={42} className="text-red-400" />
+                }
+              </div>
+
+              <h3 className="text-white text-xl font-bold mb-3">{heading}</h3>
+              <p className="text-white/60 text-sm leading-relaxed mb-6">{body}</p>
+
+              {showSettingsCard && (
+                <div className="bg-white/5 rounded-2xl p-4 mb-5 border border-white/10 text-left">
+                  <p className="text-white/50 text-xs leading-relaxed">
+                    <span className="text-amber-400 font-semibold block mb-1">How to re-enable:</span>
+                    Tap 🔒 in your browser address bar →{' '}
+                    <span className="text-white/70">Site settings</span> →{' '}
+                    <span className="text-white/70">Location</span> →{' '}
+                    <span className="text-green-400 font-semibold">Allow</span>
+                  </p>
+                </div>
+              )}
+
+              {/* Retry — meaningful for 'error'; hidden while in-flight */}
+              {!inFlight && (
+                <button
+                  onClick={retryLocation}
+                  className="w-full py-4 rounded-xl font-semibold text-white bg-green-500 hover:bg-green-600 transition-colors text-sm mb-3"
+                >
+                  Try Again
+                </button>
+              )}
+
+              {/* In-flight placeholder keeps layout stable and sets expectations */}
+              {inFlight && (
+                <div className="w-full py-4 rounded-xl text-center text-white/30 text-sm mb-3 bg-white/5 select-none">
+                  Locating…
+                </div>
+              )}
+
+              <button
+                onClick={() => navigate('/home')}
+                className="w-full py-3 rounded-xl font-semibold text-white/50 text-sm"
+              >
+                Go Back
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
 
       {/* ── SUCCESS GUIDE OVERLAY (after front panel keep) ── */}
       {showSuccessGuide && (
@@ -990,6 +1122,7 @@ const ScanScreen = () => {
         </div>
       </div>
 
+
       <div className="flex-none pb-8 pt-3 px-6">
         <div className="flex items-center justify-between">
           <button onClick={() => { setUploadMode(true); setUploadSlots({ 0: null, 1: null }); setSubmitError(null); }} className="flex flex-col items-center gap-1">
@@ -1015,19 +1148,26 @@ const ScanScreen = () => {
               </div>
               <span className="text-white/50 text-[9px]">Analysing</span>
             </div>
-          ) : showNextPrompt ? null : (
+          ) : showNextPrompt ? null : (isDesktop && !phoneGPSReceived) ? (
+            /* ── Desktop, no GPS yet: open QR handoff ── */
             <button
+              type="button"
+              onClick={openQRSession}
+              className="flex flex-col items-center gap-1"
+            >
+              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-green-400 to-green-600 shadow-lg shadow-green-500/40" />
+              <span className="text-[9px] font-medium text-green-400">Use Phone</span>
+            </button>
+          ) : (
+            /* ── Mobile OR desktop after phone GPS received ── */
+            <button
+              type="button"
               onClick={startScan}
               disabled={!canStartScan}
               className="flex flex-col items-center gap-1"
             >
               <div className={`w-16 h-16 rounded-full flex items-center justify-center transition-all ${!canStartScan ? 'opacity-40' : ''}`}>
-                <div
-                  className={`w-16 h-16 rounded-full ${canStartScan
-                    ? 'bg-gradient-to-br from-green-400 to-green-600 shadow-lg shadow-green-500/40'
-                    : 'bg-white/15'
-                  }`}
-                />
+                <div className={`w-16 h-16 rounded-full ${canStartScan ? 'bg-gradient-to-br from-green-400 to-green-600 shadow-lg shadow-green-500/40' : 'bg-white/15'}`} />
               </div>
               <span className={`text-[9px] font-medium ${canStartScan ? 'text-green-400' : 'text-white/40'}`}>
                 {canStartScan ? 'Scan' : 'Position'}

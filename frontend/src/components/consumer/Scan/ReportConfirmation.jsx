@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Icon from '../../common/Icon';
 import Card from '../../common/Card';
@@ -7,6 +7,25 @@ import Button from '../../common/Button';
 const ReportConfirmation = () => {
   const navigate = useNavigate();
   const [purchaseChannel, setPurchaseChannel] = useState('');
+  const [locationLabel, setLocationLabel] = useState('Locating…');
+
+  useEffect(() => {
+    const scan = JSON.parse(sessionStorage.getItem('currentScan') || '{}');
+    const lat = scan.latitude;
+    const lng = scan.longitude;
+    if (lat && lng) {
+      fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10&addressdetails=1`)
+        .then((r) => r.json())
+        .then((data) => {
+          const a = data.address || {};
+          const parts = [a.city || a.town || a.village || a.county, a.state].filter(Boolean);
+          setLocationLabel(parts.length ? parts.join(', ') : data.display_name || 'Location captured');
+        })
+        .catch(() => setLocationLabel(`${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E`));
+    } else {
+      setLocationLabel('Location unavailable');
+    }
+  }, []);
 
   const channels = [
     'Market stall',
@@ -36,7 +55,7 @@ const ReportConfirmation = () => {
           </div>
           <h2 className="text-xl font-bold text-gray-900 mb-2">GPS Locked</h2>
           <p className="text-sm text-gray-500">
-            Location captured: Lagos Mainland Market
+            Location captured: {locationLabel}
           </p>
         </div>
 

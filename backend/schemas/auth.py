@@ -1,8 +1,15 @@
 """Authentication request and response schemas"""
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator, ConfigDict
 from backend.models.user import UserRole, UserStatus
+
+
+_FREE_EMAIL_DOMAINS = {
+    "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "live.com",
+    "icloud.com", "aol.com", "protonmail.com", "mail.com", "ymail.com",
+    "msn.com", "googlemail.com", "yahoo.co.uk", "yahoo.com.ng",
+}
 
 
 class RegisterRequest(BaseModel):
@@ -16,6 +23,26 @@ class RegisterRequest(BaseModel):
     # NEW: Location fields
     state: Optional[str] = Field(None, max_length=100)
     city: Optional[str] = Field(None, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_email_for_role(self) -> "RegisterRequest":
+        role = str(self.role)
+        email = self.email
+
+        if role in ("nafdac_officer", "nafdac_admin", "UserRole.NAFDAC_OFFICER", "UserRole.NAFDAC_ADMIN"):
+            if not email:
+                raise ValueError("A nafdac.gov.ng email address is required for NAFDAC registration")
+            if not email.lower().endswith("@nafdac.gov.ng"):
+                raise ValueError("NAFDAC accounts must use an @nafdac.gov.ng email address")
+
+        if role in ("company_admin", "UserRole.COMPANY_ADMIN"):
+            if not email:
+                raise ValueError("A company email address is required for company admin registration")
+            domain = email.lower().split("@")[-1]
+            if domain in _FREE_EMAIL_DOMAINS:
+                raise ValueError("Company admin registration requires a company email address, not a free email provider")
+
+        return self
 
 
 class LoginRequest(BaseModel):

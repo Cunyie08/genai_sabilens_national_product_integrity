@@ -10,6 +10,7 @@ DELETE /api/consumer/scans/clear — clear all scan history
 """
 
 import uuid
+import json
 import logging
 import asyncio
 import base64
@@ -19,6 +20,7 @@ from io import BytesIO
 from typing import Optional
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from pydantic import BaseModel, Field
@@ -31,11 +33,12 @@ from backend.utils.response import success_response, error_response
 from backend.services.ai_integration import run_scan_analysis
 from backend.models.scan import Scan, ScanAnalysis
 from backend.utils.image_upload import upload_scan_image
+from backend.utils.geocoder import reverse_geocode
 from backend.dependencies import get_optional_user, get_current_user
 
 logger = logging.getLogger("consumer.router")
 
-router = APIRouter(prefix="/api/consumer", tags=["Consumer"])
+router = APIRouter(prefix="/consumer", tags=["Consumer"])
 
 # Thread pool for blocking Cloudinary uploads
 _upload_executor = ThreadPoolExecutor(max_workers=2)
@@ -54,6 +57,7 @@ class ScanRequest(BaseModel):
     location_text: Optional[str] = ""
     purchase_channel: Optional[str] = "unknown"
     product_name: Optional[str] = ""
+    session_id: Optional[str] = None            # QR cross-device handoff — publish result to desktop
 
 
 class ScanCreateRequest(BaseModel):
@@ -180,6 +184,7 @@ def _normalise_result(ai_result: dict) -> dict:
         },
     }
 
+
 async def _save_scan_to_db(
     data: dict,
     req: ScanRequest,
@@ -214,6 +219,14 @@ async def _save_scan_to_db(
             f"{lat:.5f}° N, {lng:.5f}° E" if lat is not None and lng is not None else None
         )
 
+        geo_state: Optional[str] = None
+        geo_lga: Optional[str] = None
+        if lat is not None and lng is not None:
+            try:
+                geo_state, geo_lga = reverse_geocode(lat, lng)
+            except Exception as geo_exc:
+                logger.warning("Reverse geocoding failed (non-fatal): %s", geo_exc)
+
         all_image_urls = [u for u in [
             image_url,
             data.get("back_image_url"),
@@ -233,6 +246,8 @@ async def _save_scan_to_db(
             latitude=lat,
             longitude=lng,
             location_text=location_text,
+            scan_location_state=geo_state,
+            scan_location_lga=geo_lga,
             image_url=image_url or None,
             back_image_url=data.get("back_image_url") or None,
             scan_image_urls=all_image_urls if all_image_urls else [],
@@ -296,9 +311,15 @@ async def detect_product(
         # Save temporarily to disk for OCR processing
         with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
             pil_image = Image.open(BytesIO(image_bytes))
-            # Convert RGBA to RGB if needed
-            if pil_image.mode == 'RGBA':
-                pil_image = pil_image.convert('RGB')
+            # Convert all formats (RGBA, LA, etc) to RGB for JPEG saving
+            if pil_image.mode != 'RGB':
+                # Handle images with transparency by pasting onto white background
+                if pil_image.mode in ('RGBA', 'LA'):
+                    background = Image.new('RGB', pil_image.size, (255, 255, 255))
+                    background.paste(pil_image, mask=pil_image.split()[-1])
+                    pil_image = background
+                else:
+                    pil_image = pil_image.convert('RGB')
             pil_image.save(tmp_file.name, 'JPEG', quality=85)
             temp_path = tmp_file.name
         
@@ -412,6 +433,11 @@ async def submit_scan(
         # Save scan to DB in background
         user_id = current_user.id if current_user else None
         asyncio.create_task(_save_scan_to_db(data, req, image_url, user_id=user_id))
+
+        # Cross-device handoff: push result to the waiting desktop WebSocket
+        if req.session_id:
+            from backend.routers.scan_session import publish_result
+            publish_result(req.session_id, data)
 
         return success_response(data=data, message="Scan analysis complete")
 

@@ -1,0 +1,6 @@
+# Enforce Linux line endings (LF) for server scripts and configs
+*.sh text eol=lf
+*.ini text eol=lf
+
+# Default behavior: auto-detect text files and normalize
+* text=auto

@@ -22,6 +22,7 @@ from backend.schemas.shared import (
     ReverseGeocodeResponse,
 )
 from backend.services.rag_client import rag_healthcheck, verify_product_with_rag
+from backend.utils.geocoder import reverse_geocode as _reverse_geocode
 from backend.utils.response import error_response, success_response
 import logging
 
@@ -83,7 +84,7 @@ _STATE_CITIES = {
 }
 
 
-@router.get("/api/verify/nafdac/{number}", response_model=None)
+@router.get("/verify/nafdac/{number}", response_model=None)
 async def verify_nafdac_number(
     number: str = Path(..., description="NAFDAC registration number"),
     db: AsyncSession = Depends(get_db),
@@ -152,7 +153,7 @@ async def verify_nafdac_number(
     )
 
 
-@router.get("/api/verify/batch/{number}", response_model=None)
+@router.get("/verify/batch/{number}", response_model=None)
 async def verify_batch_number(
     number: str = Path(..., description="Batch number"),
     db: AsyncSession = Depends(get_db),
@@ -186,7 +187,7 @@ async def verify_batch_number(
         return error_response(str(exc), code="INTERNAL_ERROR", status_code=500)
 
 
-@router.post("/api/verify/image", response_model=None)
+@router.post("/verify/image", response_model=None)
 async def verify_product_by_image(
     req: ImageVerifyRequest,
     db: AsyncSession = Depends(get_db),
@@ -208,7 +209,7 @@ async def verify_product_by_image(
         return error_response(str(exc), code="INTERNAL_ERROR", status_code=500)
 
 
-@router.get("/api/verify/product/{product_id}", response_model=None)
+@router.get("/verify/product/{product_id}", response_model=None)
 async def get_product_public_details(
     product_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -240,7 +241,7 @@ async def get_product_public_details(
         return error_response(str(exc), code="INTERNAL_ERROR", status_code=500)
 
 
-@router.get("/api/location/states", response_model=None)
+@router.get("/location/states", response_model=None)
 async def get_nigerian_states(db: AsyncSession = Depends(get_db)):
     # Try DB first, fall back to hardcoded list
     try:
@@ -259,7 +260,7 @@ async def get_nigerian_states(db: AsyncSession = Depends(get_db)):
     return success_response(data=_NIGERIAN_STATES)
 
 
-@router.get("/api/location/cities/{state}", response_model=None)
+@router.get("/location/cities/{state}", response_model=None)
 async def get_cities_by_state(
     state: str = Path(..., description="Nigerian state name"),
     db: AsyncSession = Depends(get_db),
@@ -298,15 +299,24 @@ async def get_cities_by_state(
     return success_response(data=[{"name": city, "state": state} for city in fallback_cities])
 
 
-@router.post("/api/location/reverse-geocode", response_model=None)
-async def reverse_geocode(req: ReverseGeocodeRequest):
+@router.post("/location/reverse-geocode", response_model=None)
+async def reverse_geocode_endpoint(req: ReverseGeocodeRequest):
     try:
+        state, lga = _reverse_geocode(req.latitude, req.longitude)
+        if state and lga:
+            formatted = f"{lga}, {state}, Nigeria"
+        elif state:
+            formatted = f"{state}, Nigeria"
+        else:
+            formatted = f"{req.latitude:.4f}° N, {req.longitude:.4f}° E"
+
         return success_response(
             data=ReverseGeocodeResponse(
-                state="Lagos",
-                city="Ikeja",
+                state=state,
+                lga=lga,
+                city=lga,       # backwards-compat alias
                 address=None,
-                formatted_location=f"{req.latitude:.4f}, {req.longitude:.4f} (Lagos, Nigeria)",
+                formatted_location=formatted,
             ).model_dump(),
             message="Reverse geocode completed",
         )
@@ -314,7 +324,7 @@ async def reverse_geocode(req: ReverseGeocodeRequest):
         return error_response(str(exc), code="INTERNAL_ERROR", status_code=500)
 
 
-@router.post("/api/verify/rag/product", response_model=None)
+@router.post("/verify/rag/product", response_model=None)
 async def verify_product_with_rag_service(req: RAGVerifyRequest):
     try:
         data = await verify_product_with_rag(
@@ -338,7 +348,7 @@ async def verify_product_with_rag_service(req: RAGVerifyRequest):
         return error_response(str(exc), code="INTERNAL_ERROR", status_code=500)
 
 
-@router.get("/api/verify/rag/health", response_model=None)
+@router.get("/verify/rag/health", response_model=None)
 async def get_rag_service_health():
     try:
         data = await rag_healthcheck()

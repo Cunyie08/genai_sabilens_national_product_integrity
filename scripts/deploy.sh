@@ -21,7 +21,7 @@ PROJECT_ID=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/projec
 log "Step 1/6 — Pulling latest code..."
 cd "$APP_DIR"
 git fetch --all --prune
-git reset --hard origin/main
+git reset --hard origin/master
 log "Code updated → $(git rev-parse --short HEAD) ($(git log -1 --format='%s'))"
 
 # ─── 2. Activate Virtual Environment ─────────────────────────────────────────
@@ -52,16 +52,24 @@ log "  .env updated ($(wc -l < "$ENV_FILE") lines)"
 
 # ─── 5. Run Database Migrations ──────────────────────────────────────────────
 log "Step 5/6 — Running Alembic migrations..."
+
+# CRITICAL FIX: Move into the backend folder where alembic.ini and the alembic folder live
+cd "$APP_DIR/backend"
+
 set +e  # alembic prints to stderr on "no new revisions" — capture cleanly
-ALEMBIC_OUT=$(alembic -c backend/alembic.ini upgrade head 2>&1)
+ALEMBIC_OUT=$(alembic upgrade head 2>&1)
 EXIT_CODE=$?
 set -e
+
 echo "$ALEMBIC_OUT"
 if [[ $EXIT_CODE -ne 0 ]]; then
   log "FATAL: Alembic migration failed. Aborting before service restart."
   exit 1
 fi
 log "  Migrations applied"
+
+# Return to root directory for the remainder of the script
+cd "$APP_DIR"
 
 # ─── 6. Restart Services and Verify ──────────────────────────────────────────
 log "Step 6/6 — Restarting services: ${SERVICES[*]}"

@@ -81,7 +81,8 @@ class ReverseGeocodeRequest(BaseModel):
 class ReverseGeocodeResponse(BaseModel):
     """Reverse geocode response."""
     state: Optional[str] = None
-    city: Optional[str] = None
+    lga: Optional[str] = None
+    city: Optional[str] = None      # backwards-compat alias for lga
     address: Optional[str] = None
     formatted_location: str
 

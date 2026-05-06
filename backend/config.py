@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
 
+    # Frontend origin — used to build mobile_url for QR code handoff
+    FRONTEND_URL: str = "http://localhost:5173"
+
     # JWT
     SECRET_KEY: str = "change-me-in-production"
     ALGORITHM: str = "HS256"

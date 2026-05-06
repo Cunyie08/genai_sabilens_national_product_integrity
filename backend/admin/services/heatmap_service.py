@@ -1,25 +1,38 @@
-"""Heatmap geographic aggregation service."""
+"""
+Heatmap geographic aggregation service — role-adaptive GROUP BY.
+
+GROUP BY level:
+  Super Admin  + no ?state filter  → scan_location_state  (36 state rows)
+  Super Admin  + ?state=X          → scan_location_lga WHERE state=X  (drill-down)
+  NAFDAC Admin                     → scan_location_lga WHERE state=ctx.jurisdiction
+  Company Admin                    → scan_location_lga WHERE company_id=ctx.company_id
+"""
 from __future__ import annotations
 from typing import Literal
-from uuid import UUID
 
 from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.admin.dependencies import TenantContext
-from backend.admin.schemas.heatmap import HeatmapFilters, HeatmapPoint, HeatmapResponse
+from backend.admin.schemas.heatmap import HeatmapFilters, HeatmapFeature, HeatmapResponse
+from backend.admin import nafdac_categories
 from backend.models.scan import Scan
-from backend.models.company import Company
 
 
-def _risk_level(fake_proportion: float) -> Literal["critical", "high", "medium", "low"]:
-    if fake_proportion > 30:
-        return "critical"
-    elif fake_proportion > 15:
-        return "high"
-    elif fake_proportion > 5:
-        return "medium"
+def _risk_level(fake_pct: float) -> Literal["critical", "high", "medium", "low"]:
+    if fake_pct > 30: return "critical"
+    if fake_pct > 15: return "high"
+    if fake_pct > 5:  return "medium"
     return "low"
+
+
+def _display_name(geo_id: str, level: str) -> str:
+    return f"{geo_id} State" if level == "state" else f"{geo_id} LGA"
+
+
+def _is_state_level(ctx: TenantContext, filters: HeatmapFilters) -> bool:
+    """Super Admin with no state filter → aggregate by state. All others → by LGA."""
+    return ctx.is_super and not filters.state
 
 
 async def get_heatmap(
@@ -27,107 +40,96 @@ async def get_heatmap(
     ctx: TenantContext,
     filters: HeatmapFilters,
 ) -> HeatmapResponse:
-    """
-    Returns heatmap data points aggregated by state / LGA / market.
-
-    Tenant scoping:
-    - company_admin  → WHERE scans.company_id = ctx.company_id
-    - nafdac / super → no company filter
-
-    NDPR: company_admin coordinates rounded to 2 d.p. (LGA centroid precision).
-    """
-    total_col = func.count().label("total_scans")
-    fake_col = func.sum(case((Scan.status == "fake", 1), else_=0)).label("fake_count")
-    susp_col = func.sum(case((Scan.status == "suspicious", 1), else_=0)).label("suspicious_count")
-    lat_col = func.avg(Scan.latitude).label("center_latitude")
-    lng_col = func.avg(Scan.longitude).label("center_longitude")
+    state_level = _is_state_level(ctx, filters)
+    group_col   = Scan.scan_location_state if state_level else Scan.scan_location_lga
 
     stmt = (
         select(
-            Scan.scan_location_state.label("state"),
-            Scan.scan_location_lga.label("lga"),
-            Scan.market_name,
-            Scan.company_id,
-            lat_col,
-            lng_col,
-            total_col,
-            fake_col,
-            susp_col,
+            group_col.label("geo_id"),
+            func.avg(Scan.latitude).label("center_lat"),
+            func.avg(Scan.longitude).label("center_lng"),
+            func.count().label("total_scans"),
+            func.sum(case((Scan.status == "fake",       1), else_=0)).label("fake_count"),
+            func.sum(case((Scan.status == "suspicious", 1), else_=0)).label("suspicious_count"),
+            func.sum(case((Scan.status == "authentic",  1), else_=0)).label("authentic_count"),
         )
-        .where(Scan.scan_location_state.isnot(None))
+        .where(group_col.isnot(None))
     )
 
+    # ── RBAC / geofence (applied by TenantContext — never from request body) ──
     stmt = ctx.apply_scan_filter(stmt)
 
+    # ── Optional request-level filters ───────────────────────────────────────
+    if filters.state and ctx.is_super:          # Super Admin drill-down only
+        stmt = stmt.where(Scan.scan_location_state == filters.state)
+    if filters.lga:
+        stmt = stmt.where(Scan.scan_location_lga == filters.lga)
     if filters.date_from:
         stmt = stmt.where(Scan.created_at >= filters.date_from)
     if filters.date_to:
         stmt = stmt.where(Scan.created_at <= filters.date_to)
-    if filters.state:
-        stmt = stmt.where(Scan.scan_location_state == filters.state)
-    if filters.lga:
-        stmt = stmt.where(Scan.scan_location_lga == filters.lga)
-    if filters.subcategory_id:
-        from backend.models.product import Product
-        stmt = stmt.join(Product, Scan.product_id == Product.id, isouter=True)
-        stmt = stmt.where(Product.category_id == filters.subcategory_id)
+    if filters.subcategory:
+        from backend.models.product import Product, ProductCategory
+        cat_name = nafdac_categories.resolve_subcategory(filters.subcategory)
+        stmt = (
+            stmt
+            .join(Product, Scan.product_id == Product.id, isouter=True)
+            .join(ProductCategory, Product.category_id == ProductCategory.id, isouter=True)
+            .where(ProductCategory.name == cat_name)
+        )
 
-    stmt = stmt.group_by(
-        Scan.scan_location_state,
-        Scan.scan_location_lga,
-        Scan.market_name,
-        Scan.company_id,
-    ).order_by(fake_col.desc())
+    stmt = (
+        stmt
+        .group_by(group_col)
+        .order_by(func.sum(case((Scan.status == "fake", 1), else_=0)).desc())
+    )
 
     rows = (await db.execute(stmt)).mappings().all()
 
-    # Resolve company names in a single follow-up query
-    company_ids = {r["company_id"] for r in rows if r["company_id"]}
-    company_names: dict[UUID, str] = {}
-    if company_ids:
-        c_result = await db.execute(
-            select(Company.id, Company.name).where(Company.id.in_(company_ids))
-        )
-        company_names = {row.id: row.name for row in c_result}
+    aggregation_level: Literal["state", "lga"] = "state" if state_level else "lga"
+    parent_geo: str | None = (
+        filters.state         if (not state_level and filters.state and ctx.is_super)
+        else ctx.jurisdiction if ctx.is_nafdac
+        else None
+    )
 
-    points: list[HeatmapPoint] = []
+    features: list[HeatmapFeature] = []
     for row in rows:
         total = row["total_scans"] or 1
-        fake = row["fake_count"] or 0
-        susp = row["suspicious_count"] or 0
-        fake_prop = round(fake / total * 100, 2)
+        fake  = row["fake_count"]  or 0
+        susp  = row["suspicious_count"] or 0
+        auth  = row["authentic_count"]  or 0
+        fake_pct = round(fake / total * 100, 2)
         combined = round((fake + susp) / total * 100, 2)
 
-        raw_lat = float(row["center_latitude"]) if row["center_latitude"] else None
-        raw_lng = float(row["center_longitude"]) if row["center_longitude"] else None
+        lat = float(row["center_lat"]) if row["center_lat"] else None
+        lng = float(row["center_lng"]) if row["center_lng"] else None
+        if ctx.is_company:              # NDPR: coarsen coordinates to ~LGA centroid precision
+            lat = round(lat, 2) if lat is not None else None
+            lng = round(lng, 2) if lng is not None else None
 
-        # NDPR: truncate coordinates for company_admin callers
-        if ctx.is_company:
-            lat = round(raw_lat, 2) if raw_lat is not None else None
-            lng = round(raw_lng, 2) if raw_lng is not None else None
-        else:
-            lat, lng = raw_lat, raw_lng
-
-        company_id = row["company_id"]
-        points.append(HeatmapPoint(
-            state=row["state"],
-            lga=row["lga"],
-            market_name=row["market_name"],
-            center_latitude=lat,
-            center_longitude=lng,
+        features.append(HeatmapFeature(
+            geo_id=row["geo_id"],
+            display_name=_display_name(row["geo_id"], aggregation_level),
+            center_lat=lat,
+            center_lng=lng,
             total_scans=row["total_scans"],
             fake_count=fake,
             suspicious_count=susp,
-            fake_proportion=fake_prop,
+            authentic_count=auth,
+            fake_pct=fake_pct,
             combined_risk_rate=combined,
-            risk_level=_risk_level(fake_prop),
-            company_id=company_id if not ctx.is_company else None,
-            company_name=company_names.get(company_id) if not ctx.is_company else None,
-            can_get_report=True,
+            risk_level=_risk_level(fake_pct),
+            breakdown_locked=(
+                ctx.is_nafdac
+                and not ctx.has_granular_access("quantity_breakdown")
+            ),
         ))
 
     return HeatmapResponse(
-        points=points,
-        total_points=len(points),
+        aggregation_level=aggregation_level,
+        parent_geo=parent_geo,
+        features=features,
         filters_applied=filters,
+        total_features=len(features),
     )
