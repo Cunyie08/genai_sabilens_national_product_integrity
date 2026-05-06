@@ -47,6 +47,28 @@ const emptyImages = { 0: null, 1: null };
 
 const detectProductCategory = () => 'unknown';
 
+// Gallery images from the device can be 5-15 MB as raw base64.  Sending
+// that over mobile as a JSON body reliably hits Nginx's body-size limit and
+// stalls slow connections.  This helper caps the longest side at 1280 px and
+// re-encodes as JPEG 0.82, bringing a typical gallery photo under 300 KB.
+function resizeGalleryImage(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    img.onload = () => {
+      const MAX_PX = 1280;
+      const scale = Math.min(1, MAX_PX / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth  * scale);
+      const h = Math.round(img.naturalHeight * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width  = w;
+      canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', 0.82));
+    };
+    img.src = dataUrl;
+  });
+}
+
 const ScanScreen = ({ sessionId = null }) => {
   const navigate = useNavigate();
   const isDesktop = window.innerWidth >= 1024;
@@ -564,7 +586,10 @@ const ScanScreen = ({ sessionId = null }) => {
     setSubmitError(null);
     const slot = uploadSlotRef.current;
     const reader = new FileReader();
-    reader.onload = () => { setUploadSlots(prev => ({ ...prev, [slot]: reader.result })); };
+    reader.onload = async () => {
+      const resized = await resizeGalleryImage(reader.result);
+      setUploadSlots(prev => ({ ...prev, [slot]: resized }));
+    };
     reader.readAsDataURL(file);
   }, []);
 
