@@ -15,9 +15,15 @@ const BASE_URL =
   'https://sabilens.com/api';
 
 /**
- * Generic fetch wrapper with JSON handling and error normalisation.
+ * Generic fetch wrapper with JSON handling, error normalisation, and timeout.
+ *
+ * @param {string} path
+ * @param {RequestInit} options
+ * @param {number} timeoutMs  Abort after this many ms (default 30 s).
+ *                            Pass a larger value for long-running endpoints
+ *                            like /consumer/scan (image upload + AI pipeline).
  */
-async function request(path, options = {}) {
+async function request(path, options = {}, timeoutMs = 30000) {
   const url = `${BASE_URL}${path}`;
 
   const defaultHeaders = { 'Content-Type': 'application/json' };
@@ -28,27 +34,40 @@ async function request(path, options = {}) {
     defaultHeaders['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch(url, {
-    ...options,
-    headers: { ...defaultHeaders, ...(options.headers || {}) },
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  let body;
   try {
-    body = await res.json();
-  } catch {
-    body = { success: false, message: `HTTP ${res.status}` };
-  }
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: { ...defaultHeaders, ...(options.headers || {}) },
+    });
 
-  if (!res.ok) {
-    const msg =
-      body?.detail ||
-      body?.message ||
-      `Request failed with status ${res.status}`;
-    throw new Error(msg);
-  }
+    let body;
+    try {
+      body = await res.json();
+    } catch {
+      body = { success: false, message: `HTTP ${res.status}` };
+    }
 
-  return body;
+    if (!res.ok) {
+      const msg =
+        body?.detail ||
+        body?.message ||
+        `Request failed with status ${res.status}`;
+      throw new Error(msg);
+    }
+
+    return body;
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error('Request timed out. Please check your connection and try again.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -87,7 +106,7 @@ export const scanApi = {
    * @param {string} [payload.product_name]
    */
   submitScan: (payload) =>
-    request('/api/consumer/scan', { method: 'POST', body: JSON.stringify(payload) }),
+    request('/api/consumer/scan', { method: 'POST', body: JSON.stringify(payload) }, 120000),
 
   /**
    * Quick product detection for front panel.
