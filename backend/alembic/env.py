@@ -26,6 +26,29 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def _load_dotenv(env_path: str) -> None:
+    """
+    Parse KEY=VALUE lines from a .env file and inject them into os.environ.
+
+    The deploy script writes /opt/sabilens/backend/.env to disk (step 4) but
+    does not source it into the shell, so DATABASE_URL is on disk but not in
+    the process environment.  This parser is intentionally minimal — no
+    external packages required.
+    """
+    if not os.path.exists(env_path):
+        return
+    with open(env_path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key and key not in os.environ:   # shell env takes precedence
+                os.environ[key] = val
+
+
 def _get_sync_url() -> str:
     """
     Return a psycopg2-compatible URL for Alembic.
@@ -33,12 +56,18 @@ def _get_sync_url() -> str:
     The application uses asyncpg for the async FastAPI engine; Alembic requires
     a synchronous driver.  We swap the dialect prefix here so the same
     DATABASE_URL env var works for both.
+
+    Falls back to parsing backend/.env directly when DATABASE_URL is absent
+    from the shell environment (normal in the GCE deploy pipeline).
     """
     url = os.environ.get("DATABASE_URL", "")
     if not url:
+        _load_dotenv(os.path.join(_BACKEND_DIR, ".env"))
+        url = os.environ.get("DATABASE_URL", "")
+    if not url:
         raise RuntimeError(
-            "DATABASE_URL environment variable is not set. "
-            "Alembic cannot connect to the database."
+            "DATABASE_URL not found in the environment or in backend/.env. "
+            "Ensure the Secret Manager secret 'sabilens-env' contains DATABASE_URL."
         )
     return url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
 
