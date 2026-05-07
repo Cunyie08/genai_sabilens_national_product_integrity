@@ -179,12 +179,12 @@ const ScanScreen = ({ sessionId = null }) => {
   // ── Error Messages ─────────────────────────────────────────────────────────
   const getUserFriendlyErrorMessage = (error) => {
     const message = error?.message?.toLowerCase() || '';
+    const status = error?.status;
     if (!navigator.onLine || message.includes('network') || message.includes('fetch') || message.includes('failed to fetch')) return 'No internet connection. Please check your network and try again.';
     if (message.includes('timeout') || message.includes('timed out')) return 'Request timed out. Please check your connection and try again.';
-    if (message.includes('413') || message.includes('too large') || message.includes('request entity')) return 'Image too large to upload. Please try again — the image will be compressed automatically.';
-    if (message.includes('internal server error') || message.includes('500')) return 'Our servers are experiencing issues. Please try again in a few minutes.';
-    if (message.includes('unavailable') || message.includes('503')) return 'Service temporarily unavailable. Please try again later.';
-    if (message.includes('too many') || message.includes('429')) return 'Too many scan requests. Please wait a moment before trying again.';
+    if (status === 413 || message.includes('413') || message.includes('too large') || message.includes('request entity')) return 'Image too large to upload. Please try again — the image will be compressed automatically.';
+    if (status === 429 || message.includes('too many') || message.includes('429')) return 'Too many scan requests. Please wait a moment before trying again.';
+    if ((status !== undefined && status >= 500) || message.includes('internal server error') || message.includes('500') || message.includes('unavailable') || message.includes('503')) return 'Something went wrong on our end. Please try again in a moment.';
     if (message.includes('blurry') || message.includes('unclear') || message.includes('quality')) return 'The image is unclear. Please ensure the product is well-lit and the label is readable.';
     if (message.includes('nafdac') && (message.includes('not found') || message.includes('missing'))) return 'The NAFDAC number was not found. Please ensure the back/side label is clearly visible.';
     if (message.includes('unauthorized') || message.includes('token') || message.includes('401')) return 'Your session has expired. Please log in again to continue.';
@@ -606,8 +606,10 @@ const ScanScreen = ({ sessionId = null }) => {
   const handleSubmitUploads = useCallback(() => {
     if (!uploadSlots[0] || !uploadSlots[1]) { setSubmitError('Please select both the front and back panel images before analysing.'); return; }
     const slots = { ...uploadSlots };
-    setUploadSlots({ 0: null, 1: null });
-    setUploadMode(false);
+    setSubmitError(null);
+    // Keep uploadMode open so the loading state and any errors stay visible.
+    // submitToAI navigates away on success; on error it sets submitError and
+    // the user can retry without re-selecting their images.
     submitToAI(slots);
   }, [uploadSlots, submitToAI]);
 
@@ -680,8 +682,9 @@ const ScanScreen = ({ sessionId = null }) => {
         <div className="flex flex-col flex-1 px-5 pt-12 pb-6 overflow-y-auto">
           <div className="flex items-center gap-3 mb-5">
             <button
-              onClick={() => { setUploadMode(false); setUploadSlots({ 0: null, 1: null }); setSubmitError(null); }}
-              className="w-9 h-9 rounded-full flex items-center justify-center bg-white/10 border border-white/15 hover:bg-white/20 transition-colors"
+              onClick={() => { if (submitting) return; setUploadMode(false); setUploadSlots({ 0: null, 1: null }); setSubmitError(null); }}
+              disabled={submitting}
+              className="w-9 h-9 rounded-full flex items-center justify-center bg-white/10 border border-white/15 hover:bg-white/20 transition-colors disabled:opacity-40"
             >
               <ArrowRight size={16} className="text-white rotate-180" />
             </button>
@@ -705,9 +708,11 @@ const ScanScreen = ({ sessionId = null }) => {
               <div key={slot} className="flex flex-col gap-1.5">
                 <p className="text-white/50 text-[9px] font-semibold tracking-widest uppercase">{label}</p>
                 <button
-                  onClick={() => openSlotPicker(slot)}
+                  onClick={() => { if (!submitting) openSlotPicker(slot); }}
+                  disabled={submitting}
                   className={`relative h-36 rounded-xl border-2 border-dashed flex flex-col items-center justify-center overflow-hidden transition-all
-                    ${uploadSlots[slot] ? 'border-green-500/60' : 'border-white/15 hover:border-green-500/40'}`}
+                    ${uploadSlots[slot] ? 'border-green-500/60' : 'border-white/15 hover:border-green-500/40'}
+                    ${submitting ? 'opacity-60 cursor-not-allowed' : ''}`}
                 >
                   {uploadSlots[slot] ? (
                     <>
@@ -740,12 +745,20 @@ const ScanScreen = ({ sessionId = null }) => {
 
           <button
             onClick={handleSubmitUploads}
-            disabled={!uploadSlots[0] || !uploadSlots[1]}
+            disabled={!uploadSlots[0] || !uploadSlots[1] || submitting}
             className={`w-full py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all text-sm
-              ${uploadSlots[0] && uploadSlots[1] ? 'bg-green-500 text-white' : 'bg-white/10 text-white/30 cursor-not-allowed'}`}
+              ${uploadSlots[0] && uploadSlots[1] && !submitting ? 'bg-green-500 text-white' : 'bg-white/10 text-white/30 cursor-not-allowed'}`}
           >
-            <Flashlight size={16} />
-            {uploadSlots[0] && uploadSlots[1] ? 'Analyse Both Images' : `Select ${!uploadSlots[0] ? 'Front' : 'Back'} Package`}
+            {submitting ? (
+              <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+            ) : (
+              <Flashlight size={16} />
+            )}
+            {submitting
+              ? 'Analysing… this may take up to 60 seconds'
+              : uploadSlots[0] && uploadSlots[1]
+                ? 'Analyse Both Images'
+                : `Select ${!uploadSlots[0] ? 'Front' : 'Back'} Package`}
           </button>
         </div>
       </div>

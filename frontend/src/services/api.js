@@ -56,7 +56,9 @@ async function request(path, options = {}, timeoutMs = 30000) {
         body?.detail ||
         body?.message ||
         `Request failed with status ${res.status}`;
-      throw new Error(msg);
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
     }
 
     return body;
