@@ -213,10 +213,10 @@ async def _save_scan_to_db(
         
         evidence = data.get("evidence_package") or {}
 
-        lat = req.latitude if req.latitude is not None and req.latitude != 0.0 else None
-        lng = req.longitude if req.longitude is not None and req.longitude != 0.0 else None
+        lat = req.latitude if req.latitude is not None else None
+        lng = req.longitude if req.longitude is not None else None
         location_text = req.location_text or (
-            f"{lat:.5f}° N, {lng:.5f}° E" if lat is not None and lng is not None else None
+            f"{lat:.5f}° N, {lng:.5f}° E" if lat is not None and lng is not None else "Location unavailable"
         )
 
         geo_state: Optional[str] = None

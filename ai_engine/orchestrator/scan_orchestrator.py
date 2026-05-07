@@ -186,8 +186,13 @@ class ScanOrchestrator:
             from vision_engine.pipeline.visual_pipeline import VisualPipeline as _VP
             self._visual_pipeline = _VP()
             logger.info("VisualPipeline pre-loaded at startup.")
-        except Exception:
-            logger.warning("VisualPipeline pre-load failed.", exc_info=True)
+        except Exception as _exc:
+            logger.error(
+                "VisualPipeline pre-load FAILED — %s: %s. "
+                "Vision signals will be MOCKED. "
+                "Ensure torch, torchvision, ultralytics are installed on this host.",
+                type(_exc).__name__, _exc,
+            )
             self._visual_pipeline = None
 
         logger.info("ScanOrchestrator ready.")
@@ -349,8 +354,13 @@ class ScanOrchestrator:
     def _run_ocr_multi(self, image_paths: list, damage_score: float, retriever=None) -> AgentSignal:
         try:
             from ocr_linguistic.pipeline import run_pipeline as ocr_run_pipeline
-        except Exception:
-            logger.warning("OCR import failed.", exc_info=True)
+        except Exception as _exc:
+            logger.error(
+                "OCR import FAILED — %s: %s. "
+                "OCR signals will be MOCKED. "
+                "Ensure paddlepaddle and paddleocr are installed on this host.",
+                type(_exc).__name__, _exc,
+            )
             return self._mock_ocr_signal()
 
         results = []
@@ -461,8 +471,13 @@ class ScanOrchestrator:
                 from vision_engine.pipeline.visual_pipeline import VisualPipeline
                 pipeline = VisualPipeline()
                 self._visual_pipeline = pipeline
-            except Exception:
-                logger.warning("Vision import failed.", exc_info=True)
+            except Exception as _exc:
+                logger.error(
+                    "Vision import FAILED — %s: %s. "
+                    "Vision signals will be MOCKED. "
+                    "Ensure torch, torchvision, ultralytics are installed on this host.",
+                    type(_exc).__name__, _exc,
+                )
                 return self._mock_vision_signal()
 
         best_result     = None

@@ -2,6 +2,17 @@
 
 import { scanApi } from './api';
 
+// Parse an ISO timestamp from the backend as UTC and format in WAT (Africa/Lagos, UTC+1).
+// The backend returns naive datetime strings without a 'Z' suffix; appending 'Z' forces
+// JavaScript to interpret them as UTC rather than local time.
+const toWATTime = (isoStr) => {
+  if (!isoStr) return 'Recently';
+  const utcStr = (isoStr.endsWith('Z') || isoStr.includes('+')) ? isoStr : isoStr + 'Z';
+  return new Date(utcStr).toLocaleTimeString('en-NG', {
+    hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Lagos',
+  });
+};
+
 // Cache configuration
 let scansCache = null;
 let scansCacheTime = null;
@@ -112,7 +123,7 @@ export const getUserScanHistory = async (forceRefresh = false) => {
       product: scan.product_name || 'Unknown Product',
       productImage: scan.product_image_url,
       status: scan.status?.toLowerCase() || 'suspicious',
-      time: scan.created_at ? new Date(scan.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recently',
+      time: toWATTime(scan.created_at),
       date: scan.created_at,
       timestamp: new Date(scan.created_at).getTime(),
       category: scan.category,
@@ -181,7 +192,7 @@ export const getScanById = async (scanId) => {
         product: scan.product_name || 'Unknown Product',
         productImage: scan.product_image_url,
         status: scan.status?.toLowerCase() || 'suspicious',
-        time: scan.created_at ? new Date(scan.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recently',
+        time: toWATTime(scan.created_at),
         date: scan.created_at,
         timestamp: new Date(scan.created_at).getTime(),
         category: scan.category,
