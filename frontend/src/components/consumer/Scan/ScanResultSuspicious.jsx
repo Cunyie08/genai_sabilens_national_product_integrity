@@ -250,23 +250,6 @@ const ScanResultSuspicious = ({ onBack, onReportIssue, onScanAnother }) => {
           </div>
         </div>
 
-        {/* 4. Warning Signs Detected */}
-        {scanData.warnings?.length > 0 && (
-          <div className="p-4 border-b border-gray-100">
-            <h3 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
-              <Icon name="AlertOctagon" size={16} className="text-warning" library="fi" />
-              Warning Signs Detected
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {scanData.warnings.map((w, i) => (
-                <span key={i} className="text-xs bg-warning/10 text-warning px-3 py-1 rounded-full">
-                  {w?.type || w?.message || String(w)}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* 5. Why this product is flagged */}
         <div className="p-4 border-b border-gray-100">
           <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
@@ -274,19 +257,9 @@ const ScanResultSuspicious = ({ onBack, onReportIssue, onScanAnother }) => {
             Why this product is flagged:
           </h3>
           <div className="bg-warning/5 rounded-xl p-4">
-            {scanData.summary && (
-              <p className="text-sm text-gray-700 mb-3 font-medium">{scanData.summary}</p>
-            )}
-            <ul className="space-y-3 text-sm">
-              {scanData.redFlags.map((flag, idx) => (
-                <li key={idx} className="flex items-start gap-3">
-                  <div className="w-5 h-5 bg-warning/10 rounded-full flex items-center justify-center mt-0.5 shrink-0">
-                    <Icon name="AlertTriangle" size={12} className="text-warning" library="fi" />
-                  </div>
-                  <span className="text-gray-700">{flag}</span>
-                </li>
-              ))}
-            </ul>
+            <p className="text-sm text-gray-700">
+              {scanData.instruction || 'We could not fully verify this product. Please check with NAFDAC at nafdac.gov.ng before purchasing.'}
+            </p>
           </div>
         </div>
 

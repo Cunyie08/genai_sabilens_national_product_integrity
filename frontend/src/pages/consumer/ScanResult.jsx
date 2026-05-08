@@ -23,19 +23,6 @@ const ScanResultRescan = ({ onRescan, onBack }) => {
           {aiResult?.simple_instruction || 'The AI could not make a confident determination. Please rescan the product with clearer images.'}
         </p>
       </div>
-      {aiResult?.summary && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-6">
-          <p className="text-sm text-yellow-800">{aiResult.summary}</p>
-        </div>
-      )}
-      {aiResult?.warnings?.length > 0 && (
-        <div className="bg-orange-50 rounded-xl p-4 mb-6">
-          <p className="text-xs font-medium text-orange-700 mb-2">Issues detected</p>
-          {aiResult.warnings.map((w, i) => (
-            <p key={i} className="text-xs text-orange-600">• {w?.message || w?.type || String(w)}</p>
-          ))}
-        </div>
-      )}
       <button
         onClick={onRescan}
         className="w-full bg-primary text-white py-4 rounded-xl font-semibold text-base"

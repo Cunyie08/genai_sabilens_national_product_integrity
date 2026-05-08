@@ -208,22 +208,6 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
           </div>
         </div>
 
-        {/* 4. Warning Signs Detected - Only if any warnings exist */}
-        {scanData.warnings?.length > 0 && (
-          <div className="p-4 border-b border-gray-100">
-            <h3 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
-              <Icon name="AlertOctagon" size={16} className="text-yellow-500" library="fi" />
-              Warning Signs Detected
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {scanData.warnings.map((w, i) => (
-                <span key={i} className="text-xs bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full">
-                  {w?.type || w?.message || String(w)}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* 5. Why this product is verified */}
         <div className="p-4 border-b border-gray-100">
