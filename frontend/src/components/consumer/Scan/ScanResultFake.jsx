@@ -250,23 +250,6 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
           </div>
         </div>
 
-        {/* 4. Warning Signs Detected */}
-        {scanData.warnings?.length > 0 && (
-          <div className="p-4 border-b border-gray-100">
-            <h3 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
-              <Icon name="AlertOctagon" size={16} className="text-danger" library="fi" />
-              Warning Signs Detected
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {scanData.warnings.map((w, i) => (
-                <span key={i} className="text-xs bg-danger/10 text-danger px-3 py-1 rounded-full">
-                  {w?.type || w?.message || String(w)}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* 5. Why this product is flagged */}
         <div className="p-4 border-b border-gray-100">
           <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
@@ -274,19 +257,9 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
             Why this product is flagged:
           </h3>
           <div className="bg-danger/5 rounded-xl p-4">
-            {scanData.summary && (
-              <p className="text-sm text-gray-700 mb-3 font-medium">{scanData.summary}</p>
-            )}
-            <ul className="space-y-3 text-sm">
-              {scanData.issues.map((issue, idx) => (
-                <li key={idx} className="flex items-start gap-3">
-                  <div className="w-5 h-5 bg-danger/10 rounded-full flex items-center justify-center mt-0.5 shrink-0">
-                    <Icon name="X" size={12} className="text-danger" library="fi" />
-                  </div>
-                  <span className="text-gray-700">{issue}</span>
-                </li>
-              ))}
-            </ul>
+            <p className="text-sm text-gray-700">
+              {scanData.instruction || 'This product has failed verification and shows signs of being counterfeit. Do not purchase it.'}
+            </p>
           </div>
         </div>
 
