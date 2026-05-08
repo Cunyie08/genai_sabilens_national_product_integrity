@@ -311,8 +311,14 @@ const ScanScreen = ({ sessionId = null }) => {
       return { hasProduct: response.has_product, confidence: response.confidence };
     } catch (err) {
       console.error('Product detection error:', err);
-      setProductCheckError(err?.response?.data?.message || 'Detection failed. Please retake.');
-      return { hasProduct: false, confidence: 0 };
+      // If the detection service is down (5xx, network error), fail open so
+      // users can still scan. Only block if the API explicitly returns a result.
+      const status = err?.status || err?.response?.status;
+      if (status && status < 500) {
+        setProductCheckError(err?.response?.data?.message || 'Detection failed. Please retake.');
+        return { hasProduct: false, confidence: 0 };
+      }
+      return { hasProduct: true, confidence: 0.5 };
     } finally {
       setProductCheckLoading(false);
     }
