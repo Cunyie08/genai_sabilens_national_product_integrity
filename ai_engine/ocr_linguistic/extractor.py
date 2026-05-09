@@ -226,9 +226,9 @@ def extract_nafdac_number(raw_text: str, retriever=None):
             return strict
         # In text but not in DB — fall through to Pass 2
 
-    #  Pass 2: loose + correction 
+    #  Pass 2: loose + correction
     if retriever is None:
-        return strict
+        return strict or _loose_nafdac_from_text(raw_text)
 
     loose = _loose_nafdac_from_text(raw_text)
     if not loose:
@@ -236,6 +236,8 @@ def extract_nafdac_number(raw_text: str, retriever=None):
 
     corrected = _correct_ocr_errors(loose)
     if corrected == loose:
+        if retriever.retrieve_by_nafdac_no(loose):
+            return loose
         return strict
 
     if retriever.retrieve_by_nafdac_no(corrected):
