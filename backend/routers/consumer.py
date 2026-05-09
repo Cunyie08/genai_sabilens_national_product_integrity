@@ -311,6 +311,13 @@ async def detect_product(
         # Save temporarily to disk for OCR processing
         with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
             pil_image = Image.open(BytesIO(image_bytes))
+            # Resize large images (e.g. high-res iPhone camera captures) before OCR
+            w, h = pil_image.size
+            if max(w, h) > 1920:
+                scale = 1920 / max(w, h)
+                pil_image = pil_image.resize(
+                    (int(w * scale), int(h * scale)), Image.LANCZOS
+                )
             # Convert all formats (RGBA, LA, etc) to RGB for JPEG saving
             if pil_image.mode != 'RGB':
                 # Handle images with transparency by pasting onto white background
@@ -483,17 +490,20 @@ async def get_user_scans(
                     confidence = float(confidence)
                 except:
                     pass
-            
+
             similarity = scan.similarity_score
             if similarity is not None:
                 try:
                     similarity = float(similarity)
                 except:
                     pass
-            
-            # Use image_url as the product image URL
+
+            # Use Cloudinary URL when available; never return raw base64 blobs
             product_image = scan.image_url or getattr(scan, 'product_image_url', None)
-            
+            # Skip base64 data URLs — they make the response huge and are useless as thumbnails
+            if product_image and product_image.startswith("data:"):
+                product_image = None
+
             scans_data.append({
                 "id": str(scan.id),
                 "product_name": scan.product_name,
@@ -505,13 +515,9 @@ async def get_user_scans(
                 "batch_number": scan.batch_number,
                 "expiry_date": scan.expiry_date.isoformat() if scan.expiry_date else None,
                 "location_text": scan.location_text,
-                "latitude": scan.latitude,
-                "longitude": scan.longitude,
                 "confidence_score": confidence,
                 "similarity_score": similarity,
-                "scan_data": scan.scan_data,
                 "created_at": scan.created_at.isoformat() if scan.created_at else None,
-                "updated_at": scan.updated_at.isoformat() if hasattr(scan, 'updated_at') and scan.updated_at else None,
             })
         
         return success_response(
