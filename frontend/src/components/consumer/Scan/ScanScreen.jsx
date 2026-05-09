@@ -240,7 +240,10 @@ const ScanScreen = ({ sessionId = null }) => {
       const scanRecord = {
         id: data.scan_id || `scan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         product: data.product_name || 'Verified Product',
-        productImage: primaryImage,
+        // Use the Cloudinary URL returned by the backend — never store the raw base64
+        // blob as productImage because saveScan() forwards it to the DB as image_url,
+        // which inflates the scan-history response by 300-500 KB per scan.
+        productImage: data.image_url || null,
         status: verdict.toLowerCase(),
         category: detectedCategory,
         location: geo.address || '',

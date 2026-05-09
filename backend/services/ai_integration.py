@@ -20,6 +20,17 @@ from typing import Optional
 import httpx
 from backend.config import settings
 
+# Register HEIC/HEIF support with Pillow so iPhone photos in HEIC format
+# can be opened by Image.open() throughout the process.
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+    logging.getLogger("ai_integration").info("pillow_heif registered: HEIC images supported")
+except ImportError:
+    logging.getLogger("ai_integration").warning(
+        "pillow_heif not installed; HEIC images will fail to open"
+    )
+
 logger = logging.getLogger("ai_integration")
 
 # ── Python-path setup ────────────────────────────────────────────────────────
@@ -105,13 +116,70 @@ def _get_orchestrator():
 # ── Image helpers ─────────────────────────────────────────────────────────────
 
 async def _save_base64_image(data_url: str) -> str:
-    """Write a base64 data-URL image to a temp file and return the path."""
+    """Write a base64 data-URL image to a temp file and return the path.
+
+    HEIC/HEIF images (iPhone 14 Pro gallery exports) are converted to JPEG
+    so downstream Pillow and Tesseract callers never see a HEIC extension.
+    """
     header, encoded = data_url.split(",", 1)
-    suffix = ".png" if "png" in header else ".jpg"
+    img_bytes = base64.b64decode(encoded)
+    header_lower = header.lower()
+
+    is_heic = "heic" in header_lower or "heif" in header_lower
+
+    if is_heic:
+        heic_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".heic")
+        heic_tmp.write(img_bytes)
+        heic_tmp.close()
+        try:
+            from PIL import Image as PILImage
+            img = PILImage.open(heic_tmp.name).convert("RGB")
+            jpg_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+            img.save(jpg_tmp.name, "JPEG", quality=90)
+            jpg_tmp.close()
+            logger.info("HEIC → JPEG conversion succeeded: %s", jpg_tmp.name)
+            return jpg_tmp.name
+        except Exception as exc:
+            logger.warning("HEIC conversion failed (%s); falling back to raw bytes", exc)
+        finally:
+            try:
+                os.unlink(heic_tmp.name)
+            except Exception:
+                pass
+
+    suffix = ".png" if "png" in header_lower else ".jpg"
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    tmp.write(base64.b64decode(encoded))
+    tmp.write(img_bytes)
     tmp.close()
     return tmp.name
+
+
+def _resize_if_needed(path: str, max_px: int = 1920) -> str:
+    """Resize image so its longest side ≤ max_px. Returns the (possibly new) path.
+
+    Operates synchronously — call via run_in_executor from async code.
+    If anything fails the original path is returned untouched.
+    """
+    try:
+        from PIL import Image as PILImage
+        img = PILImage.open(path)
+        w, h = img.size
+        if max(w, h) <= max_px:
+            return path
+        scale = max_px / max(w, h)
+        new_w, new_h = int(w * scale), int(h * scale)
+        img = img.convert("RGB").resize((new_w, new_h), PILImage.LANCZOS)
+        new_path = path + "_r.jpg"
+        img.save(new_path, "JPEG", quality=85)
+        logger.info("Resized %dx%d → %dx%d: %s", w, h, new_w, new_h, new_path)
+        try:
+            os.unlink(path)
+        except Exception:
+            pass
+        return new_path
+    except Exception as exc:
+        logger.warning("Image resize failed (%s); using original", exc)
+        return path
 
 
 async def _download_image(url: str) -> str:
@@ -212,12 +280,16 @@ async def run_scan_analysis(
     tmp_path: Optional[str] = None
     back_tmp_path: Optional[str] = None
     try:
+        loop = asyncio.get_event_loop()
+
         tmp_path = await _prepare_image(image_data)
-        logger.info("Front image saved to %s", tmp_path)
+        tmp_path = await loop.run_in_executor(None, _resize_if_needed, tmp_path)
+        logger.info("Front image ready: %s", tmp_path)
 
         if back_image_data:
             back_tmp_path = await _prepare_image(back_image_data)
-            logger.info("Back image saved to %s", back_tmp_path)
+            back_tmp_path = await loop.run_in_executor(None, _resize_if_needed, back_tmp_path)
+            logger.info("Back image ready: %s", back_tmp_path)
 
         # Build ordered list: front first, back second if provided
         image_paths = [p for p in [tmp_path, back_tmp_path] if p]
@@ -225,7 +297,6 @@ async def run_scan_analysis(
 
         gps = {"lat": latitude, "lng": longitude, "accuracy": 10.0}
 
-        loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             _executor,
             _run_orchestrator_sync,

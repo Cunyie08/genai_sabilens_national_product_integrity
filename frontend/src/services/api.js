@@ -10,9 +10,12 @@
 // window.location.hostname means every device automatically talks to the
 // right host without any hardcoding.  VITE_API_BASE_URL overrides this for
 // staging / production deployments.
+// All request paths below already include the /api prefix (e.g. /api/consumer/scan),
+// so BASE_URL must NOT end with /api — that would produce the double /api/api/ seen in
+// nginx logs.  VITE_API_BASE_URL in .env should be set to https://sabilens.com (no /api).
 const BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
-  'https://sabilens.com/api';
+  'https://sabilens.com';
 
 /**
  * Generic fetch wrapper with JSON handling, error normalisation, and timeout.
