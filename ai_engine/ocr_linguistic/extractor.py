@@ -43,11 +43,11 @@ from .config import (
 # Loose NAFDAC pattern — catches OCR misreads like AQ-106037
 # ONLY used in Pass 2. Never for primary matching.
 _NAFDAC_LOOSE_KEYWORD = re.compile(
-    r"(?:NAFDAC\s*(?:REG(?:ISTRATION)?\s*)?(?:NO\.?|NUMBER)?\s*|"
+    r"(?:NAFDAC\s*(?:REG(?:ISTRATION)?\s*)?(?:\.?\s*NO\.?|NUMBER)?\s*|"
     r"REG(?:ISTRATION)?\s*(?:NO\.?|NUMBER)\s*)"
-    r":?\s*([A-Z][A-Z0-9]{0,2}-[A-Z0-9]{3,6})",
+    r"[:\s]*([A-Z][A-Z0-9]{0,2}-[A-Z0-9]{3,6})",
     re.IGNORECASE
-)
+) 
 _NAFDAC_LOOSE_STANDALONE = re.compile(r"\b[A-Z][A-Z0-9]{0,1}-[A-Z0-9]{3,6}\b")
 
 # OCR digit/letter confusion map.
