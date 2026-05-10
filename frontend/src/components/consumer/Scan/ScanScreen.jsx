@@ -2,10 +2,9 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, Image, ArrowRight, Check, AlertCircle, CameraOff, Flashlight, RotateCcw } from 'lucide-react';
 import { scanApi } from '../../../services/api';
-// import { saveScan } from '../../../services/scanHistory';
 import useMediaPipeDetection from '../../../hooks/useMediaPipeDetection';
 import useGeolocation from '../../../hooks/useGeolocation';
-import { saveScan, markRefreshNeeded } from '../../../services/scanHistory';
+import { markRefreshNeeded } from '../../../services/scanHistory';
 
 const TOTAL_PHASES = 2;
 
@@ -237,27 +236,10 @@ const ScanScreen = ({ sessionId = null }) => {
       const displayConfidence = data.display_confidence || (data.confidence_score ? Math.round(data.confidence_score * 100) : null);
       const confidenceLabel = data.confidence_label || 'AI Confidence Score';
       
-      const scanRecord = {
-        id: data.scan_id || `scan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        product: data.product_name || 'Verified Product',
-        // Use the Cloudinary URL returned by the backend — never store the raw base64
-        // blob as productImage because saveScan() forwards it to the DB as image_url,
-        // which inflates the scan-history response by 300-500 KB per scan.
-        productImage: data.image_url || null,
-        status: verdict.toLowerCase(),
-        category: detectedCategory,
-        location: geo.address || '',
-        latitude: geo.latitude,
-        longitude: geo.longitude,
-        similarity: displayConfidence,
-        timestamp: Date.now(),
-        date: new Date().toISOString(),
-        details: data
-      };
-      
-      await saveScan(scanRecord);
       markRefreshNeeded();
-      
+
+      const scanId = data.scan_id || `scan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
       sessionStorage.setItem('currentScan', JSON.stringify({
         productImage: primaryImage,
         backImage,
@@ -270,7 +252,7 @@ const ScanScreen = ({ sessionId = null }) => {
         latitude: geo.latitude,
         longitude: geo.longitude,
         category: detectedCategory,
-        scan_id: scanRecord.id,
+        scan_id: scanId,
         displayConfidence: displayConfidence,
         confidenceLabel: confidenceLabel,
         simpleInstruction: data.simple_instruction || ''
