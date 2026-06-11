@@ -312,7 +312,7 @@ Git Workflow
 � Merge order: tunjipaul merges first, then Mr Openx, then Barrister Femi
 
 Environment Variables - .env
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/sabilens
+DATABASE_URL=postgresql+asyncpg://user:password@localhost:5433/sabilens
 REDIS_URL=redis://localhost:6379
 SECRET_KEY=your_jwt_secret_key_here
 ACCESS_TOKEN_EXPIRE_MINUTES=60

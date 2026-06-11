@@ -1,92 +1,120 @@
 """
-Generates reference embeddings for the SimilarityEngine.
+generate_embeddings.py  –  SabiLens Visual Module v2
+=====================================================
+WHAT CHANGED FROM v1 AND WHY
+------------------------------
+v1 stored all view embeddings as a flat list per product.
+The SimilarityEngine then took max(similarities) across all views.
 
-IMPROVEMENTS OVER ORIGINAL:
-  1. L2-normalises every embedding before saving - this makes cosine similarity
-     more discriminative. Without normalisation, magnitude differences dominate
-     and all scores cluster around 0.2.
-  2. Stores ONLY front.jpg as the primary embedding per product.
-     Back/side/top views confuse the matcher when query is always a front scan.
-     All views are stored as secondary - primary is always compared first.
-  3. Prints a similarity sanity check after building  each product's front.jpg
-     should score >= 0.85 against its own embedding. If it doesn't, the extractor
-     is not discriminative enough for that product.
+Problem: max() lets a fake "win" on ANY one view.  A fake that
+looks like the back panel of another product gets a free pass.
+
+v2 stores embeddings in a STRUCTURED dict per product:
+  {
+      "Product_Name": {
+          "front":  [emb],           # always exactly 1 embedding
+          "others": [emb, emb, ...]  # back, left, right, top, bottom
+      }
+  }
+
+The SimilarityEngine v2 then weights front at 0.6 and others at 0.4.
+
+BACKWARDS COMPATIBILITY:
+  v2 .pkl files are NOT compatible with v1 SimilarityEngine.
+  v1 SimilarityEngine IS forward-compatible: it will use embeddings[0]
+  (front) and embeddings[1:] (others) via the isinstance(embeddings, list)
+  branch in SimilarityEngine v2.  So the v2 SimilarityEngine can read
+  BOTH v1 and v2 .pkl files.
 
 USAGE:
-    python generate_embeddings.py
+    cd Visual/
+    python vision_engine/embeddings/generate_embeddings.py
 
 OUTPUT:
-    vision_engine/embeddings/reference_embeddings.pkl
+    vision_engine/embeddings/reference_embeddings.pkl  (v2 format)
 """
 
 import os
+import sys
+
+# Ensure 'visual/' is on the path regardless of where the script is run from
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+
 import pickle
 import numpy as np
-from vision_engine.models.feature_extractor import FeatureExtractor
 from sklearn.metrics.pairwise import cosine_similarity
+
+from vision_engine.models.feature_extractor import FeatureExtractor
 
 DATASET_PATH = "reference_dataset"
 OUTPUT_PATH  = "vision_engine/embeddings/reference_embeddings.pkl"
-PRIMARY_VIEW = "front.jpg"   # Always compared frst and must exist in every product folder
+PRIMARY_VIEW = "front.jpg"
 
-
-def l2_normalise(vec: np.ndarray) -> np.ndarray:
-    """L2-normalise a vector. Makes cosine similarity purely angle-based."""
-    norm = np.linalg.norm(vec)
-    if norm == 0:
-        return vec
-    return vec / norm
+# Sanity check: a product's own front.jpg should score >= this against itself
+SELF_SIM_WARN_THRESHOLD = 0.85
 
 
 def main():
-    extractor      = FeatureExtractor()
+    extractor       = FeatureExtractor()
     embedding_store = {}
     missing_fronts  = []
 
-    print(f"\nBuilding embeddings from: {DATASET_PATH}\n")
+    print(f"\nBuilding v2 embeddings from: {DATASET_PATH}\n")
+    print("Format: {product: {front: [emb], others: [emb, ...]}}\n")
 
     for product in sorted(os.listdir(DATASET_PATH)):
         product_path = os.path.join(DATASET_PATH, product)
         if not os.path.isdir(product_path):
             continue
 
-        images = os.listdir(product_path)
-        embedding_store[product] = []
+        images = sorted(os.listdir(product_path))
+        embedding_store[product] = {"front": [], "others": []}
 
-        # Always extract front.jpg first if it exists
+        # ── Front view (primary) ──────────────────────────────────────────
         front_path = os.path.join(product_path, PRIMARY_VIEW)
         if os.path.exists(front_path):
-            emb = l2_normalise(extractor.extract(front_path))
-            embedding_store[product].append(emb)
-            print(f"{product}  front.jpg extracted")
+            emb = extractor.extract(front_path)   # already L2-normalised
+            embedding_store[product]["front"].append(emb)
+            print(f"  ✓ {product}  →  front extracted")
         else:
             missing_fronts.append(product)
-            print(f"{product} : no front.jpg found, using all views")
+            print(f"  ✗ {product}  →  no front.jpg, using all views as 'others'")
 
-        # Add remaining views as secondary embeddings
+        # ── Other views (secondary) ───────────────────────────────────────
         for image_file in images:
             if image_file == PRIMARY_VIEW:
-                continue   # already added above
-            image_path = os.path.join(product_path, image_file)
+                continue
             if not image_file.lower().endswith((".jpg", ".jpeg", ".png")):
                 continue
-            emb = l2_normalise(extractor.extract(image_path))
-            embedding_store[product].append(emb)
+            image_path = os.path.join(product_path, image_file)
+            emb = extractor.extract(image_path)
+            embedding_store[product]["others"].append(emb)
 
-    # Save
+        front_count  = len(embedding_store[product]["front"])
+        others_count = len(embedding_store[product]["others"])
+        print(f"    front={front_count}  others={others_count}")
+
+    # ── Save ──────────────────────────────────────────────────────────────
+    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
     with open(OUTPUT_PATH, "wb") as f:
         pickle.dump(embedding_store, f)
 
-    print(f"\nEmbeddings saved to {OUTPUT_PATH}")
-    print(f"   Products: {len(embedding_store)}")
-    print(f"   Total embeddings: {sum(len(v) for v in embedding_store.values())}")
+    total_embs = sum(
+        len(v["front"]) + len(v["others"])
+        for v in embedding_store.values()
+    )
+    print(f"\nEmbeddings saved → {OUTPUT_PATH}")
+    print(f"  Products : {len(embedding_store)}")
+    print(f"  Embeddings: {total_embs}")
 
     if missing_fronts:
-        print(f"\nProducts missing front.jpg: {missing_fronts}")
-        print("   Add front.jpg to these folders for best matching accuracy.")
+        print(f"\n⚠ Products missing front.jpg:")
+        for p in missing_fronts:
+            print(f"    {p}")
+        print("  Add front.jpg to these folders for best matching accuracy.")
 
-    # Sanity check, each product's front.jpg vs its own embedding
-    print("\nSelf-similarity sanity check (should all be >= 0.85)")
+    # ── Self-similarity sanity check ──────────────────────────────────────
+    print(f"\nSelf-similarity sanity check (should all be ≥ {SELF_SIM_WARN_THRESHOLD}):")
     low_scores = []
 
     for product in sorted(embedding_store.keys()):
@@ -94,60 +122,28 @@ def main():
         if not os.path.exists(front_path):
             continue
 
-        query = l2_normalise(extractor.extract(front_path))
+        query      = extractor.extract(front_path)
+        front_embs = embedding_store[product]["front"]
+        if not front_embs:
+            continue
+
         scores = [
             cosine_similarity(query.reshape(1, -1), emb.reshape(1, -1))[0][0]
-            for emb in embedding_store[product]
+            for emb in front_embs
         ]
-        best = max(scores)
-        status = "OK" if best >= 0.85 else "WARNING"
-        print(f"  {status} {product}: {best:.4f}")
-        if best < 0.85:
+        best   = max(scores)
+        status = "OK " if best >= SELF_SIM_WARN_THRESHOLD else "⚠ LOW"
+        print(f"  {status}  {product}: {best:.4f}")
+
+        if best < SELF_SIM_WARN_THRESHOLD:
             low_scores.append((product, best))
 
     if low_scores:
         print(f"\nLow self-similarity products: {low_scores}")
-        print("   These products may match poorly in production.")
-        print("   Consider adding more/better reference images.")
+        print("  Consider adding more/better reference images for these.")
     else:
-        print("\nAll products pass self-similarity check.")
+        print("\nAll products pass self-similarity check ✓")
 
 
 if __name__ == "__main__":
     main()
-
-
-
-
-# import os
-# import pickle
-# from vision_engine.models.feature_extractor import FeatureExtractor
-
-# Dataset_path = "reference_dataset"
-# output_path = "vision_engine/embeddings/reference_embeddings.pkl"
-
-# extractor = FeatureExtractor()
-
-# embedding_store = {}
-
-# for product in os.listdir(Dataset_path):
-    
-#     product_path = os.path.join(Dataset_path, product)
-    
-#     if not os.path.isdir(product_path):
-#         continue
-    
-#     embedding_store[product] = []
-    
-#     for image in os.listdir(product_path):
-        
-#         image_path = os.path.join(product_path, image)
-        
-#         embedding = extractor.extract(image_path)
-        
-#         embedding_store[product].append(embedding)
-        
-# with open(output_path, 'wb') as f:
-#     pickle.dump(embedding_store, f)
-    
-# print("Reference embeddings generated and saved to", output_path)
