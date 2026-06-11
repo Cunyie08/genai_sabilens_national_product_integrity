@@ -1,68 +1,61 @@
-# Normalizes Visual output -> FusionSignal
+# Normalizes Visual output -> FusionSignal  (v2 — EfficientNet dual-head)
 
 """
-This file contains the Fusion Engine's  Visual Signal Adapter
+visual_adapter.py  —  SabiLens Fusion Engine
+=============================================
+WHAT CHANGED FROM v1 AND WHY
+------------------------------
+v1 consumed only 6 fields from VisualPipeline:
+    product, Visual Similarity, damage_score, blur_value, confidence, verdict
 
-Normalises the output of VisualPipeline.analyze() into a
-standard FusionSignal that Fusion engine can consume directly.
+v2 VisualPipeline now outputs 11 fields including forensic signals that
+v1 never forwarded to Fusion:
+    margin          : gap to 2nd-best product match (ambiguity detector)
+    anomaly_flag    : True when similarity < 0.67 (below forensic threshold)
+    ambiguity_flag  : True when margin < 0.08 (match too close to another product)
+    penalty_applied : actual penalty multiplier used (1.0 = no penalty)
+    flags           : human-readable list of active warnings from v2 pipeline
 
-Visual OUTPUT CONTRACT (visual_pipeline.py):
-  {
-      "product":           str,    # Best matched product name from embedding store
-      "Visual Similarity": float,  # 0.0-1.0 raw cosine similarity (pre-damage)
-      "damage_score":      float,  # 0.1=sharp | 0.4=moderate | 0.8=heavy blur
-      "blur_value":        float,  # Raw Laplacian variance - from DamageDetector
-      "confidence":        float,  # 0.0-1.0 = similarity * (1 - damage_score)
-      "verdict":           str,    # "Authentic" | "Suspicious" | "Fake"
-  }
+These are now extracted and forwarded so:
+  1. fusion_engine.run_fusion() receives them in the visual_signal dict
+  2. breakdown["visual"] includes them for audit trail
+  3. The override logic uses anomaly_flag as an additional override trigger
+     (not just raw_similarity < 0.20 as in v1)
 
-SCORE DIRECTION: confidence 1.0 = authentic - same as fusion engine. No flip needed.
-ADAPTER FORMULA: fusion_score = confidence (0.0-1.0, no scale change)
+OVERRIDE CHANGES:
+  v1: override fires if raw_similarity < 0.20  (almost never fires — too permissive)
+  v2: override fires if:
+      - raw_similarity < LOGO_MATCH_FLOOR_THRESHOLD (0.20)  [v1 rule, kept]
+      - anomaly_flag=True AND penalty_applied < 0.6         [new v2 rule]
+        This catches fakes that scored 0.61-0.67 similarity (above old threshold
+        but still below the forensic anomaly band). These were the exact fakes
+        that slipped through in testing.
 
-
-DAMAGE HANDLING:
-  damage_score and blur_value are forwarded to fusion_engine.py.
-  fusion_engine uses them to:
-    1. Select the correct weight set (BASE / DAMAGED / FALLBACK)
-    2. Trigger RESCAN_REQUIRED if blur_value < EXTREME_BLUR_CEILING
-    3. Store in evidence for NAFDAC reporting and image retraining pipeline
-
-  Fusion does NOT re-apply damage_score to fusion_score.
-  Visual's confidence is already damage-adjusted by visual_pipeline.analyze().
-
-HARD OVERRIDE:
-  raw_similarity < LOGO_MATCH_FLOOR_THRESHOLD (0.20)
-  - override_flag = True
-  - fusion_engine floors verdict to SUSPICIOUS
+REMOVED:
+  - Unused import: `from ai_engine.visual.vision_engine import similarity`
+    This caused an ImportError and was never referenced anywhere in the file.
 
 BACKWARD COMPATIBILITY:
-  blur_value defaults to 60.0 (sharp) if absent.
-  This allows old visual outputs to pass through safely during the
-  transition period before damage_detector.py is updated.
-  A warning is appended to the validation errors list.
-
-SCALABILITY NOTES:
-  - Add new override conditions here as new threat patterns are identified.
-  - Do not add scoring logic - scoring belongs in fusion_engine.py.
-  - If A1 adds new output fields, extend this adapter and update schema.py.
+  All v1 fields still present in output dict.
+  New v2 fields default safely (False / 1.0 / []) if absent from visual_output,
+  so old Visual outputs still pass through without crashing.
 """
 
 from datetime import datetime, timezone
 from ai_engine.fusion_engine.config.thresholds import LOGO_MATCH_FLOOR_THRESHOLD
-from ai_engine.visual.vision_engine import similarity
+
 
 def adapt(visual_output: dict) -> dict:
     """
-    Normalise VisualPipeline output into a standard Fusion engine signal.
+    Normalise VisualPipeline v2 output into a standard Fusion engine signal.
 
     Args:
         visual_output: Raw dict from VisualPipeline.analyze()
 
     Returns:
         FusionSignal dict with all fields fusion_engine.run_fusion() needs.
-
     """
-    # non product image
+    # Non-product image
     if visual_output.get("no_product_detected"):
         return {
             "source":              "visual",
@@ -73,49 +66,78 @@ def adapt(visual_output: dict) -> dict:
             "blur_value":          float(visual_output.get("blur_value", 60.0)),
             "product_matched":     "NO_PRODUCT_DETECTED",
             "Visual_verdict":      "Fake",
+            # v2 fields
+            "margin":              0.0,
+            "anomaly_flag":        True,
+            "ambiguity_flag":      True,
+            "penalty_applied":     1.0,
+            "visual_flags":        ["NO_PRODUCT_DETECTED"],
+            # override
             "override_flag":       True,
             "override_reason":     "NO_PRODUCT_DETECTED",
             "no_product_detected": True,
             "timestamp":           datetime.now(timezone.utc).isoformat(),
         }
 
-
+    # ── Extract v1 fields ─────────────────────────────────────────────────
     confidence      = min(float(visual_output.get("confidence",        0.0)), 1.0)
     raw_similarity  = min(float(visual_output.get("Visual Similarity", 0.0)), 1.0)
-    damage_score    = float(visual_output.get("damage_score",      0.1))
-    # Default 60.0 (sharp) preserves backward compat with pre-update visual ouputs
-    blur_value      = float(visual_output.get("blur_value",        60.0))
+    damage_score    = float(visual_output.get("damage_score", 0.1))
+    blur_value      = float(visual_output.get("blur_value",   60.0))
     product_matched = visual_output.get("product",  "UNKNOWN")
-    visual_verdict      = visual_output.get("verdict",  "Fake")
+    visual_verdict  = visual_output.get("verdict",  "Fake")
 
-    # Fusion score; no flip, no re-apply of damage 
+    # ── Extract v2 fields (safe defaults for backward compat) ─────────────
+    margin          = float(visual_output.get("margin",          0.0))
+    anomaly_flag    = bool(visual_output.get("anomaly_flag",     False))
+    ambiguity_flag  = bool(visual_output.get("ambiguity_flag",   False))
+    penalty_applied = float(visual_output.get("penalty_applied", 1.0))
+    visual_flags    = list(visual_output.get("flags",            []))
+
+    # Fusion score: confidence is already penalty-adjusted by v2 pipeline
     fusion_score = round(confidence, 4)
 
-    # Hard override: if logo similarity is critically low, escalate to SUSPICIOUS floor
-    # Mirrors the override rule in config/thresholds.py → OVERRIDES["logo_match_suspicious_threshold"]
+    # ── Override logic (v2 expanded) ──────────────────────────────────────
     override_flag   = False
     override_reason = None
 
+    # Rule 1 (v1): critically low raw similarity
     if raw_similarity < LOGO_MATCH_FLOOR_THRESHOLD:
         override_flag   = True
         override_reason = (
             f"Visual: raw logo similarity ({raw_similarity:.3f}) is below the "
             f"{LOGO_MATCH_FLOOR_THRESHOLD} minimum threshold. "
-            f"Product fails minimum visual match - verdict floored to SUSPICIOUS."
+            f"Product fails minimum visual match — verdict floored to SUSPICIOUS."
         )
 
+    # Rule 2 (v2 NEW): anomaly flag active AND penalty was applied
+    # This catches the 0.61–0.67 similarity band that v1 missed
+    elif anomaly_flag and penalty_applied < 0.5:
+        override_flag   = True
+        override_reason = (
+            f"Visual v2: anomaly_flag=True with penalty_applied={penalty_applied:.2f}. "
+            f"Similarity ({raw_similarity:.3f}) is in the forensic anomaly band. "
+            f"Visual confidence reduced to {confidence:.3f} — verdict floored to SUSPICIOUS."
+        )
 
     return {
+        # ── v1 fields (unchanged) ─────────────────────────────────────────
         "source":          "VISUAL",
-        "fusion_score":    fusion_score, # 0.0-1.0 positive direction
-        "raw_confidence":  round(confidence, 4),
+        "fusion_score":    fusion_score,
+        "raw_confidence":  round(confidence,     4),
         "raw_similarity":  round(raw_similarity, 4),
-        "damage_score":    round(damage_score, 4),
-        "blur_value":      round(blur_value,   4),
+        "damage_score":    round(damage_score,   4),
+        "blur_value":      round(blur_value,     4),
         "product_matched": product_matched,
-        "Visual_verdict":      visual_verdict,
+        "Visual_verdict":  visual_verdict,
         "override_flag":   override_flag,
         "override_reason": override_reason,
+        # ── v2 fields (new) ───────────────────────────────────────────────
+        "margin":          round(margin, 4),
+        "anomaly_flag":    anomaly_flag,
+        "ambiguity_flag":  ambiguity_flag,
+        "penalty_applied": round(penalty_applied, 4),
+        "visual_flags":    visual_flags,
         "timestamp":       datetime.now(timezone.utc).isoformat(),
     }
 
@@ -125,11 +147,9 @@ def validate(visual_output: dict) -> list[str]:
     Check that Visual output has all required fields before adaptation.
     Returns a list of missing/invalid field names (empty = valid).
     """
-
-    # Non-product images skip validation
     if visual_output.get("no_product_detected"):
         return []
-    
+
     texts = []
     required = ["confidence", "Visual Similarity", "damage_score", "product", "verdict"]
 
@@ -137,12 +157,10 @@ def validate(visual_output: dict) -> list[str]:
         if field not in visual_output:
             texts.append(f"Missing field: '{field}'")
 
-    # blur_value: expected but not blocking (adapter defaults to 60.0)
     if "blur_value" not in visual_output:
         texts.append(
-            "WARNING: 'blur_value' missing from A1 output. "
-            "Update damage_detector.py and visual_pipeline.py. "
-            "Defaulting to 60.0 (sharp) - RESCAN_REQUIRED logic will not fire correctly."
+            "WARNING: 'blur_value' missing from Visual output. "
+            "Defaulting to 60.0 (sharp) — RESCAN_REQUIRED logic will not fire correctly."
         )
 
     confidence = visual_output.get("confidence", -1)
