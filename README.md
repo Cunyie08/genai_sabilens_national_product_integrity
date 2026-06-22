@@ -1,5 +1,3 @@
-<div align="center">
-
 # 🔍 SabiLens AI
 
 **AI-Powered Counterfeit Detection Platform for Nigeria**
@@ -9,7 +7,6 @@
 [![React](https://img.shields.io/badge/React-18+-61DAFB?style=flat-square&logo=react)](https://react.dev)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14-336791?style=flat-square&logo=postgresql)](https://postgresql.org)
 [![GCP](https://img.shields.io/badge/Google_Cloud-africa--south1-4285F4?style=flat-square&logo=googlecloud)](https://cloud.google.com)
-[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
 *Protecting Nigerian consumers. Defending your brand.*
 
@@ -23,7 +20,7 @@
 
 ## 📌 Overview
 
-SabiLens is a full-stack, production-deployed AI platform that enables Nigerian consumers to instantly verify the authenticity of physical products using their smartphone camera or gallery. It combines computer vision, OCR, and NAFDAC registry intelligence to return a real-time verdict; **AUTHENTIC**, **SUSPICIOUS**, or **NOT VERIFIED** in under 5 seconds.
+SabiLens is a full-stack, production-deployed AI platform that enables Nigerian consumers to instantly verify the authenticity of physical products using their smartphone camera or gallery. It combines computer vision, OCR, and NAFDAC registry intelligence to return a real-time verdict - **AUTHENTIC**, **SUSPICIOUS**, or **NOT VERIFIED** - in under 5 seconds.
 
 The platform is built for:
 
@@ -66,15 +63,15 @@ The platform is built for:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                        CLIENT LAYER                         │
-│          React PWA (Vite) — served via Nginx                │
-│     Camera Scan │ Gallery Upload │ Scan History │ Dashboards│
+│          React PWA (Vite) - served via Nginx                │
+│     Camera Scan │ Gallery Upload │ Scan History │ Dashboards │
 └──────────────────────────┬──────────────────────────────────┘
                            │ HTTPS
 ┌──────────────────────────▼──────────────────────────────────┐
 │                       API LAYER                             │
 │              FastAPI (Uvicorn, 2 workers)                   │
 │   /api/consumer/*  │  /api/v1/auth/*  │  /api/admin/*       │
-│         JWT Auth │ Rate limiting │ CORS │ Nginx proxy       │
+│         JWT Auth │ Rate limiting │ CORS │ Nginx proxy        │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
@@ -101,18 +98,18 @@ The platform is built for:
 
 ### Stack Summary
 
-| Layer          | Technology                                          |
-| -------------- | --------------------------------------------------- |
-| Frontend       | React 18, Vite, TailwindCSS, PWA                    |
-| Backend        | FastAPI, Uvicorn, SQLAlchemy (async), Alembic       |
-| AI Vision     | ResNet50 (PyTorch), ChromaDB, sentence-transformers |
-| AI OCR        | PaddleOCR (PP-OCRv3), custom regex NLP              |
-| AI Regulatory | LlamaIndex, ChromaDB, NAFDAC registry               |
-| Database       | PostgreSQL 14 (GCP Cloud SQL)                       |
-| Cache          | Redis 7 (GCP Memorystore)                           |
-| Storage        | Google Cloud Storage (3 buckets)                    |
-| Infrastructure | GCP Compute Engine (africa-south1), Nginx, systemd  |
-| Auth           | JWT (access + refresh tokens), bcrypt               |
+| Layer            | Technology                                          |
+| ---------------- | --------------------------------------------------- |
+| Frontend         | React 18, Vite, TailwindCSS, PWA                    |
+| Backend          | FastAPI, Uvicorn, SQLAlchemy (async), Alembic       |
+| AI Vision     | ResNet50 (PyTorch), ChromaDB, sentence-transformers |
+| AI OCR        | PaddleOCR (PP-OCRv3), custom regex NLP              |
+| AI Regulatory | LlamaIndex, ChromaDB, NAFDAC registry               |
+| Database         | PostgreSQL 14 (GCP Cloud SQL)                       |
+| Cache            | Redis 7 (GCP Memorystore)                           |
+| Storage          | Google Cloud Storage (3 buckets)                    |
+| Infrastructure   | GCP Compute Engine (africa-south1), Nginx, systemd  |
+| Auth             | JWT (access + refresh tokens), bcrypt               |
 
 ---
 
@@ -177,7 +174,7 @@ sabilens/
 ### 1. Clone the repository
 
 ```bash
-git clone hhttps://github.com/Cunyie08/genai_sabilens_national_product_integrity/
+git clone https://github.com/your-org/sabilens.git
 cd sabilens
 ```
 
@@ -337,13 +334,13 @@ Base URL: `https://sabilens.com/api`
 
 ### Infrastructure
 
-| Resource | Config                                                 |
-| -------- | ------------------------------------------------------ |
-| VM       | `sabilens-backend`; Compute Engine, africa-south1-a |
-| Database | Cloud SQL PostgreSQL 14;` sabilens-db`               |
-| Cache    | Cloud Memorystore Redis ;`sabilens-redis`            |
-| Storage  | 3 GCS buckets; images, reports, models                 |
-| Proxy    | Cloud SQL Proxy on `127.0.0.1:5433`                  |
+| Resource | Config                                                  |
+| -------- | ------------------------------------------------------- |
+| VM       | `sabilens-backend` - Compute Engine, africa-south1-a |
+| Database | Cloud SQL PostgreSQL 14 -`sabilens-db`               |
+| Cache    | Cloud Memorystore Redis -`sabilens-redis`            |
+| Storage  | 3 GCS buckets - images, reports, models                |
+| Proxy    | Cloud SQL Proxy on `127.0.0.1:5433`                   |
 
 ### SSH into VM
 
@@ -495,20 +492,20 @@ Please ensure:
 
 - All AI engine changes are tested with the direct scan test above
 - Do not commit `.env`, service account keys, or `chroma_db/` contents
-- PaddleOCR model files are downloaded at runtime — do not commit them
+- PaddleOCR model files are downloaded at runtime - do not commit them
 
 ---
 
 ## 🚧 Known Issues & Roadmap
 
-| Issue                                            | Status                                                                      |
-| ------------------------------------------------ | --------------------------------------------------------------------------- |
-| iPhone 14 Pro high-res uploads (>1MB) fail       | 🔧 Fix in progress; nginx `client_max_body_size` + frontend image resize |
-| Duplicate scan records from frontend double POST | 🔧 Fix in progress; remove redundant `/api/consumer/scans` call          |
-| Scan history response size (~31MB)               | 🔧 Lightweight list schema planned                                          |
-| GCS image upload (placeholder credentials)       | 🔧 Service account key setup pending                                        |
-| Mobile app (iOS/Android)                         | 📋 Planned post-supervisor sign-off                                         |
-| NAFDAC Officer dashboard                         | 📋 Planned                                                                  |
+| Issue                                            | Status                                                                       |
+| ------------------------------------------------ | ---------------------------------------------------------------------------- |
+| iPhone 14 Pro high-res uploads (>1MB) fail       | 🔧 Fix in progress - nginx `client_max_body_size` + frontend image resize |
+| Duplicate scan records from frontend double POST | 🔧 Fix in progress - remove redundant `/api/consumer/scans` call          |
+| Scan history response size (~31MB)               | 🔧 Lightweight list schema planned                                           |
+| GCS image upload (placeholder credentials)       | 🔧 Service account key setup pending                                         |
+| Mobile app (iOS/Android)                         | 📋 Planned post-supervisor sign-off                                          |
+| NAFDAC Officer dashboard                         | 📋 Planned                                                                   |
 
 ---
 
@@ -524,6 +521,8 @@ Please ensure:
 | Product / Research | NAFDAC data ingestion, product registry, documentation               |
 
 ---
+
+<div align="center">
 
 Built with ❤️ in Nigeria · Powered by Google Cloud · Fighting counterfeits with AI
 
