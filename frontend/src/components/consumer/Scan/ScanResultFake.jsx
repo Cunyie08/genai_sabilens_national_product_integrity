@@ -207,11 +207,21 @@ const ScanResultFake = ({ onBack, onReportToAuthority }) => {
           <h3 className="text-sm font-medium text-gray-700 mb-3">Risk Assessment</h3>
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-danger/5 p-3 rounded-lg text-center">
-              <p className="text-xl font-bold text-danger">High</p>
+              <p className="text-xl font-bold text-danger">
+                {scanData.severity === 'CRITICAL' || scanData.severity === 'HIGH'
+                  ? 'High'
+                  : scanData.severity === 'MEDIUM'
+                  ? 'Medium'
+                  : 'Low'}
+              </p>
               <p className="text-xs text-gray-500">Health Risk</p>
             </div>
             <div className="bg-danger/5 p-3 rounded-lg text-center">
-              <p className="text-xl font-bold text-danger">Critical</p>
+              <p className="text-xl font-bold text-danger">
+                {scanData.severity
+                  ? scanData.severity.charAt(0) + scanData.severity.slice(1).toLowerCase()
+                  : 'Critical'}
+              </p>
               <p className="text-xs text-gray-500">Counterfeit Level</p>
             </div>
           </div>
