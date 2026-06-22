@@ -1,5 +1,3 @@
-<divalign="center">
-
 # 🔍 SabiLens AI
 
 **AI-Powered Counterfeit Detection Platform for Nigeria**
@@ -814,10 +812,8 @@ Please ensure:
 
 ---
 
-<divalign="center">
 
 Built with ❤️ in Nigeria · Powered by Google Cloud · Fighting counterfeits with AI
 
 **sabilens.com**
 
-</div>
