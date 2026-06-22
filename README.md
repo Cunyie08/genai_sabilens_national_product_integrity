@@ -7,7 +7,6 @@
 [![React](https://img.shields.io/badge/React-18+-61DAFB?style=flat-square&logo=react)](https://react.dev)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14-336791?style=flat-square&logo=postgresql)](https://postgresql.org)
 [![GCP](https://img.shields.io/badge/Google_Cloud-africa--south1-4285F4?style=flat-square&logo=googlecloud)](https://cloud.google.com)
-[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
 *Protecting Nigerian consumers. Defending your brand.*
 
