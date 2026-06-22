@@ -207,12 +207,22 @@ const ScanResultSuspicious = ({ onBack, onReportIssue, onScanAnother }) => {
           <h3 className="text-sm font-medium text-gray-700 mb-3">Risk Assessment</h3>
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-warning/5 p-3 rounded-lg text-center">
-              <p className="text-xl font-bold text-warning">Medium</p>
+              <p className="text-xl font-bold text-warning">
+                {scanData.severity === 'CRITICAL' || scanData.severity === 'HIGH'
+                  ? 'High'
+                  : scanData.severity === 'MEDIUM'
+                  ? 'Medium'
+                  : 'Low'}
+              </p>
               <p className="text-xs text-gray-500">Health Risk</p>
             </div>
             <div className="bg-warning/5 p-3 rounded-lg text-center">
-              <p className="text-xl font-bold text-warning">Pending</p>
-              <p className="text-xs text-gray-500">Verification Status</p>
+              <p className="text-xl font-bold text-warning">
+                {scanData.severity
+                  ? scanData.severity.charAt(0) + scanData.severity.slice(1).toLowerCase()
+                  : 'Medium'}
+              </p>
+              <p className="text-xs text-gray-500">Suspicion Level</p>
             </div>
           </div>
         </div>

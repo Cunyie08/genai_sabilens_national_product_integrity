@@ -180,11 +180,25 @@ def classify(fusion_result: dict) -> dict:
             # Visual looks reasonable but reg missing — downgrade to SUSPICIOUS
             verdict = "SUSPICIOUS"
 
-    # Core classification 
+    # Core classification
     action           = _ACTION_MAP.get(verdict, "DO NOT BUY THIS PRODUCT. IT IS A COUNTERFEIT.")
     report_priority  = _REPORT_PRIORITY.get(verdict, "AUTO")
     instruction      = _build_instruction(verdict, fusion_result)
     simple_instruction = _SIMPLE_INSTRUCTIONS.get(verdict, _SIMPLE_INSTRUCTIONS["FAKE"])
+
+    # Context-aware simple_instruction override for known fake patterns
+    if verdict == "FAKE" and reg_status == "SUBCATEGORY_MISMATCH":
+        nafdac = evidence.get("nafdac_number", "") or ""
+        registered_cat = (
+            breakdown.get("reg", {}).get("nafdac_registered_category") or
+            "a different category"
+        )
+        simple_instruction = (
+            f"The NAFDAC number on this product ({nafdac}) is registered "
+            f"for a '{registered_cat}' product — not what you are holding. "
+            f"This is a classic counterfeit pattern."
+        )
+
     atlas_instruction  = _inject_warnings(instruction, warnings)
 
     # Override summary for transparency 

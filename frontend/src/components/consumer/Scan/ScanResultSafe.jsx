@@ -58,6 +58,7 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
         similarity: displayConfidence,
         confidence: displayConfidence,
         confidenceLabel: confidenceLabel,
+        severity: aiResult?.severity || 'LOW',
         action: aiResult?.action || 'BUY',
         instruction: aiResult?.simple_instruction || 'This product appears authentic. Safe to purchase.',
         summary: aiResult?.summary || '',
@@ -165,11 +166,21 @@ const ScanResultSafe = ({ onBack, onReportIssue, onScanAnother }) => {
           <h3 className="text-sm font-medium text-gray-700 mb-3">Risk Assessment</h3>
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-success/5 p-3 rounded-lg text-center">
-              <p className="text-xl font-bold text-success">Low</p>
+              <p className="text-xl font-bold text-success">
+                {scanData.severity === 'CRITICAL' || scanData.severity === 'HIGH'
+                  ? 'High'
+                  : scanData.severity === 'MEDIUM'
+                  ? 'Medium'
+                  : 'Low'}
+              </p>
               <p className="text-xs text-gray-500">Health Risk</p>
             </div>
             <div className="bg-success/5 p-3 rounded-lg text-center">
-              <p className="text-xl font-bold text-success">Verified</p>
+              <p className="text-xl font-bold text-success">
+                {scanData.confidenceLabel
+                  ? scanData.confidenceLabel.charAt(0) + scanData.confidenceLabel.slice(1).toLowerCase()
+                  : 'Verified'}
+              </p>
               <p className="text-xs text-gray-500">Authenticity Level</p>
             </div>
           </div>

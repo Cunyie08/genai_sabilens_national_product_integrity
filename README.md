@@ -16,6 +16,8 @@
 
 ---
 
+---
+
 ## 📌 Overview
 
 SabiLens is a full-stack, production-deployed AI platform that enables Nigerian consumers to instantly verify the authenticity of physical products using their smartphone camera or gallery. It combines computer vision, OCR, and NAFDAC registry intelligence to return a real-time verdict - **AUTHENTIC**, **SUSPICIOUS**, or **NOT VERIFIED** - in under 5 seconds.
@@ -27,8 +29,6 @@ The platform is built for:
 - **NAFDAC / regulators** - access geo-tagged enforcement intelligence by state and LGA
 
 > **Project status:** Live on Google Cloud Platform (africa-south1 region). Web-first deployment with mobile app planned post-supervisor sign-off.
-
----
 
 ## ✨ Features
 
