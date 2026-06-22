@@ -522,12 +522,6 @@ Please ensure:
 
 ---
 
-## 📄 License
-
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
-
----
-
 <div align="center">
 
 Built with ❤️ in Nigeria · Powered by Google Cloud · Fighting counterfeits with AI
