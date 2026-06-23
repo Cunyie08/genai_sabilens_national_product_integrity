@@ -265,14 +265,26 @@ def extract_expiry_date(raw_text: str):
     return match.group(0).strip() if match else None
 
 
+# Matches strings that are weight/volume/quantity labels, e.g. "360g+54g",
+# "150ml", "1.5kg", "500 g".  These are excluded from product-name candidates
+# because PaddleOCR often assigns them very high confidence (bold label text)
+# while they carry no product identity information.
+_WEIGHT_QUANTITY_RE = re.compile(
+    r'^\d[\d\.\s+×xX]*\s*(?:g|ml|kg|mg|oz|l|litre|liter)s?\b',
+    re.IGNORECASE,
+)
+
 def extract_product_name(blocks: list):
     """
     Identify the product name from OCR blocks.
-    Highest-confidence block that is not purely numeric and has > 2 chars.
+    Highest-confidence block that is not purely numeric, not a weight/volume
+    label, and has > 2 chars.
     """
     candidates = [
         b for b in blocks
-        if not b["text"].isdigit() and len(b["text"]) > 2
+        if not b["text"].isdigit()
+        and len(b["text"]) > 2
+        and not _WEIGHT_QUANTITY_RE.match(b["text"].strip())
     ]
     if not candidates:
         return None

@@ -545,6 +545,13 @@ def _check_name_identity(
     if status_code not in ("VERIFIED", "VERIFIED_NEAR_EXPIRY"):
         return result
 
+    # When the regulatory agent fell back to semantic search the matched product
+    # is a nearest-neighbour guess, not a confirmed identity.  Comparing a guessed
+    # registered name against the label name would produce false IDENTITY_MISMATCH
+    # verdicts (e.g. AXE deodorant flagged because semantic search matched Vaseline).
+    if reg_signal.get("fallback_used"):
+        return result
+
     registered_name = reg_signal.get("nafdac_registered_product")
     if not registered_name:
         return result
