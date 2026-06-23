@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5433/sabilens"
+    DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/sabilens"
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
