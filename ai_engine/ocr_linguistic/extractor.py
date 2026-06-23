@@ -277,8 +277,16 @@ _WEIGHT_QUANTITY_RE = re.compile(
 def extract_product_name(blocks: list):
     """
     Identify the product name from OCR blocks.
-    Highest-confidence block that is not purely numeric, not a weight/volume
-    label, and has > 2 chars.
+
+    Selection order:
+      1. Multi-word blocks (≥2 tokens) sorted by confidence — product names
+         almost always include a brand word plus a product-type word.
+      2. Single-word blocks sorted by confidence — only used when no multi-word
+         candidate survives filtering.
+
+    Both pools exclude purely-numeric blocks, blocks ≤ 2 chars, and
+    weight/volume labels (e.g. "360g+54g", "150ml") which PaddleOCR tends to
+    rate with high confidence because they appear as bold isolated text.
     """
     candidates = [
         b for b in blocks
@@ -288,7 +296,13 @@ def extract_product_name(blocks: list):
     ]
     if not candidates:
         return None
+
     candidates.sort(key=lambda x: x["confidence"], reverse=True)
+
+    multi_word = [b for b in candidates if len(b["text"].split()) >= 2]
+    if multi_word:
+        return multi_word[0]["text"]
+
     return candidates[0]["text"]
 
 
