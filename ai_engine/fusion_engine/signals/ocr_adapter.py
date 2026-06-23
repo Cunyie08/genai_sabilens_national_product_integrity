@@ -98,6 +98,9 @@ def adapt(ocr_output: dict) -> dict:
     damage_applied        = float(rule_score_obj.get("damage_score_applied", 0.0))
     rule_score            = float(rule_score_obj.get("rule_score",           1.0))
     product_name          = metadata.get("product_name")
+    # Front-panel blocks forwarded from scan_orchestrator (non-NAFDAC image OCR).
+    # Passed through unchanged — fusion_engine uses them for identity checking.
+    front_panel_blocks    = list(ocr_output.get("front_panel_blocks", []))
 
     # Override: NAFDAC number not found by OCR : floor to SUSPICIOUS minimum
     override_flag   = False
@@ -128,6 +131,7 @@ def adapt(ocr_output: dict) -> dict:
         "lookalike_corrections":   lookalike_corrections,
         "structural_score":        round(structural_score, 4),
         "missing_fields":          missing_fields,
+        "front_panel_blocks":      front_panel_blocks,
         "override_flag":           override_flag,
         "override_reason":         override_reason,
         "timestamp":               datetime.now(timezone.utc).isoformat(),

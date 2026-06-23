@@ -73,12 +73,21 @@ logger = logging.getLogger(__name__)
 # "COCO POPS" vs "Coco Pops" resolves via exact/substring check first (→ MATCH).
 NAME_MATCH_THRESHOLD = 0.85
 
-# Minimum similarity for an OCR block to be treated as a product-name candidate.
-# Blocks scoring below this against the registered name are unrelated label text
-# (e.g. "LAIT CORPS" vs "VASELINE EVENTONE B3 LOTION" ≈ 0.10) and must not
-# trigger IDENTITY_MISMATCH.  Genuine near-miss counterfeits ("Kellogg's Cocoa Pups"
-# vs "Kellogg's Coco Pops" ≈ 0.82) always score well above this floor.
+# Minimum similarity gate used in the single-image fallback and the visual-vs-label
+# check (b).  Blocks scoring below this are unrelated noise (e.g. taglines, category
+# text) rather than a product-name variant.  Genuine near-miss counterfeits like
+# "Kellogg's Cocoa Pups" vs "Kellogg's Coco Pops" ≈ 0.82 always exceed this.
+# The primary front-panel check (a) does NOT use this gate — it asks "does the
+# registered name appear anywhere on the front?" and needs no lower bound.
 _MIN_NAME_RELATEDNESS = 0.30
+
+# Matches weight/volume/quantity strings that appear as high-confidence OCR blocks
+# on product labels but carry no product identity information (e.g. "360g+54g").
+# Duplicated from extractor._WEIGHT_QUANTITY_RE to avoid coupling modules.
+_FRONT_NOISE_RE = re.compile(
+    r'^\d[\d\.\s+×xX]*\s*(?:g|ml|kg|mg|oz|l|litre|liter)s?\b',
+    re.IGNORECASE,
+)
 
 from ai_engine.fusion_engine.config.weights import (
     SIGNAL_WEIGHTS,
@@ -149,6 +158,7 @@ def run_fusion(visual_signal: dict, ocr_signal: dict, reg_signal: dict) -> dict:
     fallback_used          = bool(reg_signal.get("fallback_used",  False))
     nafdac_number          = ocr_signal.get("nafdac_number")
     ocr_product_name       = ocr_signal.get("product_name")
+    front_panel_blocks     = ocr_signal.get("front_panel_blocks", [])
     visual_product_matched = visual_signal.get("product_matched")
 
     #  Extreme blur check - reject before fusion 
@@ -170,6 +180,7 @@ def run_fusion(visual_signal: dict, ocr_signal: dict, reg_signal: dict) -> dict:
     # Name/identity cross-validation — detects real NAFDAC number on fake packaging
     name_id_check = _check_name_identity(
         reg_signal             = reg_signal,
+        front_panel_blocks     = front_panel_blocks,
         ocr_product_name       = ocr_product_name,
         visual_product_matched = visual_product_matched,
     )
@@ -325,6 +336,7 @@ def run_fusion(visual_signal: dict, ocr_signal: dict, reg_signal: dict) -> dict:
         "evidence": {
             "nafdac_number":             nafdac_number,
             "ocr_product_name":          ocr_product_name,
+            "front_panel_name":          name_id_check.get("front_label"),
             "brand_detected":            ocr_signal.get("brand_detected"),
             "brand_anomaly_flag":        ocr_signal.get("brand_anomaly_flag"),
             "lookalike_corrections":     ocr_signal.get("lookalike_corrections", []),
@@ -520,31 +532,51 @@ def _name_match(registered: str, candidate: str) -> dict:
     }
 
 
+def _dominant_label(blocks: list) -> "str | None":
+    """
+    Pick the most prominent brand/product text from a filtered list of OCR blocks.
+    Prefers multi-word blocks (≥2 tokens) by confidence, falls back to single-word.
+    Used to name what the front panel says in identity-mismatch consumer messages.
+    """
+    if not blocks:
+        return None
+    by_conf = sorted(blocks, key=lambda b: b.get("confidence", 0), reverse=True)
+    multi   = [b for b in by_conf if len(b.get("text", "").split()) >= 2]
+    chosen  = multi[0] if multi else (by_conf[0] if by_conf else None)
+    return chosen["text"] if chosen else None
+
+
 def _check_name_identity(
     reg_signal:             dict,
+    front_panel_blocks:     list,
     ocr_product_name:       "str | None",
     visual_product_matched: "str | None",
 ) -> dict:
     """
     Cross-validate product identity when the NAFDAC number is VERIFIED.
 
-    Catches the primary counterfeit vector: a genuine NAFDAC number affixed to
-    packaging that carries a different product name (e.g. "Cocoa Pups" on a
-    package using the NAFDAC number registered to "Coco Pops").
+    PRIMARY APPROACH (two-image scans):
+      Compares the registered product name against EVERY OCR block on the FRONT
+      panel (the image that did NOT carry the NAFDAC number).  If the registered
+      name is found anywhere on the front → identity is consistent → no mismatch.
+      If no front block matches → the front packaging does not claim to be this
+      product → IDENTITY_MISMATCH.
 
-    Checks performed (each only when the relevant name is available):
-      (a) Registered name  vs  OCR-extracted product name from the label
-      (b) Visual-matched product name  vs  OCR-extracted product name
-          (image LOOKS LIKE X but label text says Y → strong counterfeit signal)
+      This catches the core counterfeit vector: a genuine NAFDAC back panel glued
+      onto packaging whose FRONT carries a different brand/product name.
+      Example: fake "Cocoa Pups" front + genuine "Coco Pops" NAFDAC back.
 
-    Returns a result dict that is forwarded into evidence and the override hierarchy.
-    Logs the comparison at WARNING level when a mismatch is detected.
+    SINGLE-IMAGE FALLBACK:
+      When only one image was scanned (front_panel_blocks is empty), falls back to
+      comparing the extracted OCR product name against the registered name, guarded
+      by _MIN_NAME_RELATEDNESS to suppress noise blocks triggering false mismatches.
     """
     result: dict = {
         "mismatch_detected": False,
         "registered_name":   None,
         "ocr_check":         None,
         "visual_check":      None,
+        "front_label":       None,
         "reason":            None,
     }
 
@@ -565,17 +597,62 @@ def _check_name_identity(
 
     result["registered_name"] = registered_name
 
-    # Ignore visual sentinel values
     if visual_product_matched in (None, "UNKNOWN", "NO_PRODUCT_DETECTED", ""):
         visual_product_matched = None
 
-    if not ocr_product_name and not visual_product_matched:
-        return result
+    mismatch_parts: list = []
 
-    mismatch_parts = []
+    # ── Pre-compute dominant front label (used in both checks and consumer msg) ──
+    candidate_blocks: list = []
+    if front_panel_blocks:
+        candidate_blocks = [
+            b for b in front_panel_blocks
+            if not b.get("text", "").strip().isdigit()
+            and len(b.get("text", "").strip()) > 2
+            and not _FRONT_NOISE_RE.match(b.get("text", "").strip())
+        ]
+    dominant_front = _dominant_label(candidate_blocks)
+    result["front_label"] = dominant_front
 
-    # Check (a): registered name vs OCR product name extracted from the label
-    if ocr_product_name:
+    # ── Check (a): registered name vs ALL front-panel OCR blocks ─────────────
+    if candidate_blocks:
+        best_is_match = False
+        best_sim      = 0.0
+        best_block    = None
+
+        for b in sorted(candidate_blocks, key=lambda x: x.get("confidence", 0), reverse=True):
+            text = b.get("text", "").strip()
+            if not text:
+                continue
+            res = _name_match(registered_name, text)
+            if res["is_match"]:
+                best_is_match = True
+                best_sim      = res["similarity"]
+                best_block    = text
+                break   # registered name found on front panel — identity consistent
+            if res["similarity"] > best_sim:
+                best_sim  = res["similarity"]
+                best_block = text
+
+        result["ocr_check"] = {
+            "performed":  True,
+            "is_match":   best_is_match,
+            "similarity": best_sim,
+            "best_block": best_block,
+            "source":     "front_panel",
+        }
+
+        if not best_is_match:
+            label_str = f"'{dominant_front}'" if dominant_front else "(no identifiable text)"
+            mismatch_parts.append(
+                f"front panel reads {label_str} "
+                f"(best similarity={best_sim:.2f}) — "
+                f"does not match registered product '{registered_name}'"
+            )
+
+    elif ocr_product_name:
+        # Single-image fallback: no front/back distinction possible.
+        # Compare extracted product name with _MIN_NAME_RELATEDNESS guard.
         ocr_res = _name_match(registered_name, ocr_product_name)
         result["ocr_check"] = {
             "performed":       True,
@@ -584,53 +661,46 @@ def _check_name_identity(
             "method":          ocr_res["method"],
             "registered_norm": ocr_res["registered_norm"],
             "candidate_norm":  ocr_res["candidate_norm"],
+            "source":          "single_image_fallback",
         }
-        if not ocr_res["is_match"]:
-            if ocr_res["similarity"] >= _MIN_NAME_RELATEDNESS:
-                # Related-but-distinct names (e.g. "Cocoa Pups" vs "Coco Pops" ≈ 0.82)
-                # are genuine counterfeit signals.
-                mismatch_parts.append(
-                    f"OCR label name '{ocr_product_name}' "
-                    f"(similarity={ocr_res['similarity']:.2f}) does not match "
-                    f"registered name '{registered_name}'"
-                )
-            # else: similarity below relatedness floor — the extracted block is
-            # unrelated label text (tagline, language variant, category label)
-            # and should not trigger IDENTITY_MISMATCH.
-
-    # Check (b): visual-matched product vs OCR product name on the label.
-    # If the image LOOKS LIKE product X but the label text says Y (and X≠Y) that is
-    # a direct counterfeit indicator even when check (a) could not be performed.
-    if visual_product_matched and ocr_product_name:
-        vis_res = _name_match(visual_product_matched, ocr_product_name)
-        result["visual_check"] = {
-            "performed":       True,
-            "is_match":        vis_res["is_match"],
-            "similarity":      vis_res["similarity"],
-            "method":          vis_res["method"],
-            "registered_norm": vis_res["registered_norm"],
-            "candidate_norm":  vis_res["candidate_norm"],
-        }
-        if not vis_res["is_match"]:
+        if not ocr_res["is_match"] and ocr_res["similarity"] >= _MIN_NAME_RELATEDNESS:
             mismatch_parts.append(
-                f"Visual identity '{visual_product_matched}' "
-                f"(similarity={vis_res['similarity']:.2f}) does not match "
-                f"label text '{ocr_product_name}'"
+                f"OCR label name '{ocr_product_name}' "
+                f"(similarity={ocr_res['similarity']:.2f}) does not match "
+                f"registered name '{registered_name}'"
             )
-    elif visual_product_matched:
-        # OCR name unavailable — fall back to registered vs visual match
+
+    # ── Check (b): visual-matched product vs front-panel label ───────────────
+    # Defends the case where the NAFDAC is not in the DB (identity check (a) is
+    # then skipped by the fallback_used guard) but the visual model and OCR disagree.
+    # Uses the dominant front label so back-panel noise cannot trigger a false mismatch.
+    visual_label = dominant_front or (ocr_product_name if not front_panel_blocks else None)
+    if visual_product_matched and visual_label:
+        vis_res = _name_match(visual_product_matched, visual_label)
+        result["visual_check"] = {
+            "performed":  True,
+            "is_match":   vis_res["is_match"],
+            "similarity": vis_res["similarity"],
+            "method":     vis_res["method"],
+        }
+        if not vis_res["is_match"] and vis_res["similarity"] >= _MIN_NAME_RELATEDNESS:
+            mismatch_parts.append(
+                f"visual identity '{visual_product_matched}' "
+                f"(similarity={vis_res['similarity']:.2f}) does not match "
+                f"front-panel text '{visual_label}'"
+            )
+    elif visual_product_matched and not visual_label:
+        # No OCR label at all — compare registered name vs visual as last resort
         vis_res = _name_match(registered_name, visual_product_matched)
         result["visual_check"] = {
-            "performed":       True,
-            "is_match":        vis_res["is_match"],
-            "similarity":      vis_res["similarity"],
-            "method":          vis_res["method"],
-            "registered_norm": vis_res["registered_norm"],
-            "candidate_norm":  vis_res["candidate_norm"],
+            "performed":  True,
+            "is_match":   vis_res["is_match"],
+            "similarity": vis_res["similarity"],
+            "method":     vis_res["method"],
         }
-        if not vis_res["is_match"]:
+        if not vis_res["is_match"] and vis_res["similarity"] >= _MIN_NAME_RELATEDNESS:
             mismatch_parts.append(
-                f"Visual identity '{visual_product_matched}' "
+                f"visual identity '{visual_product_matched}' "
                 f"(similarity={vis_res['similarity']:.2f}) does not match "
                 f"registered name '{registered_name}'"
             )
@@ -643,16 +713,16 @@ def _check_name_identity(
             "Real NAFDAC number on mismatched packaging is a confirmed counterfeit pattern."
         )
         logger.warning(
-            "NAME_IDENTITY_MISMATCH | nafdac_registered=%r | ocr_name=%r | "
+            "NAME_IDENTITY_MISMATCH | nafdac_registered=%r | front_label=%r | "
             "visual_matched=%r | %s",
-            registered_name, ocr_product_name, visual_product_matched,
+            registered_name, dominant_front or ocr_product_name, visual_product_matched,
             "; ".join(mismatch_parts),
         )
     else:
         logger.info(
-            "NAME_IDENTITY_CHECK passed | nafdac_registered=%r | ocr_name=%r | "
+            "NAME_IDENTITY_CHECK passed | nafdac_registered=%r | front_label=%r | "
             "visual_matched=%r",
-            registered_name, ocr_product_name, visual_product_matched,
+            registered_name, dominant_front or ocr_product_name, visual_product_matched,
         )
 
     return result

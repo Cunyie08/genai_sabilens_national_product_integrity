@@ -200,6 +200,9 @@ def run_pipeline(
 
     return {
         "source": "OCR_Linguistic",
+        # Raw OCR blocks are included so scan_orchestrator can forward the
+        # non-NAFDAC (front-panel) blocks to the fusion identity check.
+        "ocr_blocks": blocks,
         "metadata": {
             "product_name":         structured.get("product_name"),
             "nafdac_number":        structured.get("nafdac_number"),

@@ -198,16 +198,23 @@ def classify(fusion_result: dict) -> dict:
             evidence.get("nafdac_registered_product") or
             "the genuine product"
         )
-        ocr_label = evidence.get("ocr_product_name") or ""
-        if ocr_label:
+        # Prefer the front-panel label (what the fake packaging actually says);
+        # fall back to the single-image extracted name for backward compatibility.
+        front_label = (
+            name_id.get("front_label") or
+            evidence.get("front_panel_name") or
+            evidence.get("ocr_product_name") or
+            ""
+        )
+        if front_label:
             simple_instruction = (
-                f"The NAFDAC number on this product belongs to '{registered_name}', "
-                f"but the label says '{ocr_label}'. "
+                f"The NAFDAC number on this product is registered to '{registered_name}', "
+                f"but the front of this pack reads '{front_label}'. "
                 "This is a fake product. Do not buy it."
             )
         else:
             simple_instruction = (
-                f"This product's NAFDAC number belongs to '{registered_name}', "
+                f"This product's NAFDAC number is registered to '{registered_name}', "
                 "but this is not that product. Do not buy it."
             )
 
@@ -298,15 +305,21 @@ def _build_instruction(verdict: str, fusion_result: dict) -> str:
                 evidence.get("nafdac_registered_product") or
                 "the genuine product"
             )
-            ocr_label = evidence.get("ocr_product_name") or ""
-            nafdac    = evidence.get("nafdac_number", "") or ""
+            front_label = (
+                name_id.get("front_label") or
+                evidence.get("front_panel_name") or
+                evidence.get("ocr_product_name") or
+                ""
+            )
+            nafdac     = evidence.get("nafdac_number", "") or ""
             nafdac_str = f" ({nafdac})" if nafdac else ""
-            label_str  = f" '{ocr_label}'" if ocr_label else " a different product name"
+            label_str  = f" '{front_label}'" if front_label else " a different product name"
             base = (
                 f"WARNING: This product has FAILED verification. "
                 f"The NAFDAC number{nafdac_str} is registered for '{registered_name}', "
-                f"but the packaging on this product shows{label_str}. "
-                "A real NAFDAC number on mismatched packaging is a common counterfeit technique. "
+                f"but the front of this packaging shows{label_str}. "
+                "A genuine NAFDAC number on packaging that does not match the registered product "
+                "is a confirmed counterfeit technique. "
                 "Do NOT purchase this product. "
                 "Your scan has been logged and reported to NAFDAC."
             )

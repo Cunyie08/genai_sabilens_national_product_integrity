@@ -388,18 +388,32 @@ class ScanOrchestrator:
             return (has_nafdac, -r.get("final_text_anomaly_score", 0.5))
 
         best = max(results, key=_score)
+
+        # Collect OCR blocks from every image that is NOT the selected back panel.
+        # These come from the front-facing image — the primary identity surface.
+        # A counterfeit will show its fake brand/product name here while placing a
+        # genuine NAFDAC number on a separate back panel insert.
+        front_panel_blocks: list = []
+        for r in results:
+            if r is not best:
+                front_panel_blocks.extend(r.get("ocr_blocks", []))
+
+        payload = {**best, "front_panel_blocks": front_panel_blocks}
+
         logger.info(
-            "OCR multi complete | %d images | best nafdac=%s | anomaly=%.3f",
+            "OCR multi complete | %d images | best nafdac=%s | anomaly=%.3f | "
+            "front_panel_blocks=%d",
             len(results),
             best.get("metadata", {}).get("nafdac_number"),
             best.get("final_text_anomaly_score", 0.5),
+            len(front_panel_blocks),
         )
         return AgentSignal(
             agent_id   = "ocr",
             available  = True,
             confidence = 1.0 - best.get("final_text_anomaly_score", 0.5),
             mocked     = False,
-            payload    = best,
+            payload    = payload,
         )
 
     def _run_regulatory(self, nafdac_no: str, nafdac_category: str) -> AgentSignal:
