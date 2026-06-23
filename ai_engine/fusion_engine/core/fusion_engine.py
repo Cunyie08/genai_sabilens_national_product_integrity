@@ -62,6 +62,7 @@ SCALABILITY NOTES:
 """
 
 import re
+import math
 import difflib
 import logging
 from datetime import datetime, timezone
@@ -88,6 +89,36 @@ _FRONT_NOISE_RE = re.compile(
     r'^\d[\d\.\s+×xX]*\s*(?:g|ml|kg|mg|oz|l|litre|liter)s?\b',
     re.IGNORECASE,
 )
+
+# Words that carry no product identity and must be excluded from token-based
+# identity matching on BOTH sides (registered name and front-panel blocks).
+# They appear in long registered names ("Vaseline blueseal pure petroleum jelly
+# original") AND are trivially copied onto fake packaging, so they cannot
+# distinguish the genuine product from a near-clone.
+_IDENTITY_STOPLIST = frozenset({
+    # Cosmetic / personal care descriptors
+    "pure", "petroleum", "jelly", "original", "lotion", "cream", "body",
+    "milk", "spray", "deodorant", "toothpaste", "gel", "soap", "wash",
+    "moisturizer", "moisturising", "moisturizing",
+    # Cereal / food descriptors
+    "cereal", "ready", "eat", "fortified", "enriched", "grain",
+    "natural", "instant", "flavour", "flavor",
+    # Generic quality / variant descriptors
+    "complete", "fresh", "protection", "classic", "extra", "new", "plus",
+    "advanced", "premium", "ultra", "pro", "max", "mini",
+    "regular", "large", "small", "pack", "set", "free",
+    # High-frequency function words
+    "the", "and", "with", "for", "by", "of", "in", "to",
+})
+
+# Tokens shorter than this are excluded from identity matching.
+# Set to 2 so only single-character OCR artefacts ("s", "l", "i") are
+# dropped by the length filter; everything else is controlled by the
+# stoplist above.  Short distinctive brand/product tokens such as 'coco',
+# 'pops', 'blue', 'seal' (all 4 chars) are deliberately kept so that
+# exact-token comparison can distinguish "cocoa" ≠ "coco", "pups" ≠ "pops",
+# etc. — which substring matching could not.
+_IDENTITY_MIN_TOKEN_CHARS = 2
 
 from ai_engine.fusion_engine.config.weights import (
     SIGNAL_WEIGHTS,
@@ -532,6 +563,45 @@ def _name_match(registered: str, candidate: str) -> dict:
     }
 
 
+def _distinctive_tokens(name: str) -> frozenset:
+    """
+    Reduce a product name to its distinctive identity tokens:
+      - lowercase, strip all punctuation
+      - exclude stoplist words (generic descriptors and function words)
+      - exclude very short tokens (< _IDENTITY_MIN_TOKEN_CHARS chars)
+    What remains is the brand + product-line name only.
+    """
+    clean  = re.sub(r"[^\w\s]", " ", name.lower())
+    tokens = clean.split()
+    return frozenset(
+        t for t in tokens
+        if len(t) >= _IDENTITY_MIN_TOKEN_CHARS
+        and t not in _IDENTITY_STOPLIST
+    )
+
+
+def _token_matches(reg_tok: str, front_tok: str) -> bool:
+    """
+    Return True when two product-name tokens represent the same word.
+
+    Short tokens (≤ 5 chars) — exact only:
+      Fuzzy at 0.85 cannot separate 'coco'/'cocoa' (ratio 0.889), so exact
+      comparison is the only reliable separator for short tokens.
+
+    Long tokens (> 5 chars) — exact first, then fuzzy ≥ 0.92:
+      0.92 rejects near-clone brand attacks such as 'baseline'/'vaseline'
+      (ratio 0.875).  Genuine OCR noise on clear labels almost always resolves
+      to an exact match after punctuation normalisation ('kellogg's'→'kelloggs');
+      the fuzzy path is a safety net for unusual single-character substitutions
+      on longer brand tokens.
+    """
+    if reg_tok == front_tok:
+        return True
+    if len(reg_tok) > 5 and len(front_tok) > 5:
+        return difflib.SequenceMatcher(None, reg_tok, front_tok).ratio() >= 0.92
+    return False
+
+
 def _dominant_label(blocks: list) -> "str | None":
     """
     Pick the most prominent brand/product text from a filtered list of OCR blocks.
@@ -614,41 +684,102 @@ def _check_name_identity(
     dominant_front = _dominant_label(candidate_blocks)
     result["front_label"] = dominant_front
 
-    # ── Check (a): registered name vs ALL front-panel OCR blocks ─────────────
-    if candidate_blocks:
-        best_is_match = False
-        best_sim      = 0.0
-        best_block    = None
+    # ── Check (a): token-based match — registered distinctive tokens vs front panel ──
+    # "Match" is decided by whole-token comparison, not substring containment.
+    # Substring matching let generic fragments ("COCO", "pure petroleum jelly")
+    # pass identity when they were copied verbatim onto a fake front panel.
+    best_is_match = False   # initialised here so check (b) can always read it
 
-        for b in sorted(candidate_blocks, key=lambda x: x.get("confidence", 0), reverse=True):
+    if candidate_blocks:
+        reg_tokens = _distinctive_tokens(registered_name)
+
+        # Collect every distinctive token from every front-panel block,
+        # keeping track of which block each token came from.
+        front_tok_entries: list = []   # (token, block_text, confidence)
+        for b in candidate_blocks:
             text = b.get("text", "").strip()
             if not text:
                 continue
-            res = _name_match(registered_name, text)
-            if res["is_match"]:
-                best_is_match = True
-                best_sim      = res["similarity"]
-                best_block    = text
-                break   # registered name found on front panel — identity consistent
-            if res["similarity"] > best_sim:
-                best_sim  = res["similarity"]
-                best_block = text
+            for tok in _distinctive_tokens(text):
+                front_tok_entries.append((tok, text, b.get("confidence", 0)))
 
-        result["ocr_check"] = {
-            "performed":  True,
-            "is_match":   best_is_match,
-            "similarity": best_sim,
-            "best_block": best_block,
-            "source":     "front_panel",
-        }
+        all_front_tokens: frozenset = frozenset(tok for tok, _, _ in front_tok_entries)
+        total_count = len(reg_tokens)
 
-        if not best_is_match:
-            label_str = f"'{dominant_front}'" if dominant_front else "(no identifiable text)"
-            mismatch_parts.append(
-                f"front panel reads {label_str} "
-                f"(best similarity={best_sim:.2f}) — "
-                f"does not match registered product '{registered_name}'"
+        # E1: registered name has no distinctive tokens after stoplist — inconclusive.
+        # Do not fire IDENTITY_MISMATCH; fall through to check (b) / score-based verdict.
+        if total_count == 0:
+            logger.warning(
+                "IDENTITY_CHECK_INCONCLUSIVE | nafdac_registered=%r yields no distinctive "
+                "tokens after stoplist — identity check skipped",
+                registered_name,
             )
+            result["ocr_check"] = {
+                "performed":       True,
+                "is_match":        None,
+                "source":          "front_panel",
+                "reg_distinctive": [],
+                "front_distinctive": sorted(all_front_tokens),
+                "token_details":   {},
+                "matched_count":   0,
+                "total_count":     0,
+                "required":        0,
+                "note":            "registered name has no distinctive tokens",
+            }
+            # best_is_match stays False → check (b) will still run normally
+
+        else:
+            # Proportional matching: count how many distinct registered tokens have
+            # ≥1 matching front-panel token via _token_matches.
+            # Each registered token is counted at most once regardless of how many
+            # front blocks contain a matching token (set semantics — no inflation).
+            sorted_front = sorted(front_tok_entries, key=lambda x: -x[2])  # conf desc
+            token_details: dict = {}   # reg_tok → {"front_tok": str, "in_block": str} or None
+            for reg_tok in sorted(reg_tokens):
+                hit = None
+                for front_tok, block_text, _ in sorted_front:
+                    if _token_matches(reg_tok, front_tok):
+                        hit = {"front_tok": front_tok, "in_block": block_text}
+                        break
+                token_details[reg_tok] = hit
+
+            matched_count = sum(1 for v in token_details.values() if v is not None)
+
+            # Tiered required threshold:
+            #   1-token name  → required 1  (single token IS the entire identity)
+            #   2-token name  → required 2  (BOTH must match; one shared fragment is not
+            #                               proof — this kills the "COCO" collision where
+            #                               "coco" matches but "pops" does not)
+            #   ≥3-token name → ceil(0.6 × total)  (clear majority, tolerates 1 OCR miss)
+            if total_count == 1:
+                required = 1
+            elif total_count == 2:
+                required = 2
+            else:
+                required = math.ceil(total_count * 0.6)
+
+            best_is_match = matched_count >= required
+
+            result["ocr_check"] = {
+                "performed":         True,
+                "is_match":          best_is_match,
+                "source":            "front_panel",
+                "reg_distinctive":   sorted(reg_tokens),
+                "front_distinctive": sorted(all_front_tokens),
+                "token_details":     token_details,
+                "matched_count":     matched_count,
+                "total_count":       total_count,
+                "required":          required,
+            }
+
+            if not best_is_match:
+                label_str = f"'{dominant_front}'" if dominant_front else "(no identifiable text)"
+                missed = sorted(t for t, v in token_details.items() if v is None)
+                mismatch_parts.append(
+                    f"front panel reads {label_str} — "
+                    f"only {matched_count}/{total_count} registered distinctive tokens matched "
+                    f"(need {required}); unmatched: {missed}"
+                )
 
     elif ocr_product_name:
         # Single-image fallback: no front/back distinction possible.
@@ -671,11 +802,12 @@ def _check_name_identity(
             )
 
     # ── Check (b): visual-matched product vs front-panel label ───────────────
-    # Defends the case where the NAFDAC is not in the DB (identity check (a) is
-    # then skipped by the fallback_used guard) but the visual model and OCR disagree.
-    # Uses the dominant front label so back-panel noise cannot trigger a false mismatch.
+    # Fix C guard: skip entirely when check (a) already confirmed identity.
+    # If best_is_match=True the registered name IS on the front panel and there
+    # is no counterfeit signal; running check (b) would fire spurious mismatches
+    # on genuine products (e.g. "strong teeth" ≠ "closeup_comple_fresh" at 0.31).
     visual_label = dominant_front or (ocr_product_name if not front_panel_blocks else None)
-    if visual_product_matched and visual_label:
+    if not best_is_match and visual_product_matched and visual_label:
         vis_res = _name_match(visual_product_matched, visual_label)
         result["visual_check"] = {
             "performed":  True,
@@ -689,7 +821,7 @@ def _check_name_identity(
                 f"(similarity={vis_res['similarity']:.2f}) does not match "
                 f"front-panel text '{visual_label}'"
             )
-    elif visual_product_matched and not visual_label:
+    elif not best_is_match and visual_product_matched and not visual_label:
         # No OCR label at all — compare registered name vs visual as last resort
         vis_res = _name_match(registered_name, visual_product_matched)
         result["visual_check"] = {
