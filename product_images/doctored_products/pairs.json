@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Kelloggs Cocoa Pups (fake front) + Coco Pops NAFDAC (genuine back)",
+    "front": "Kelloggs_cocoa_pups_360g_front.JPG",
+    "back":  "Kelloggs_cocoa_pups_360g_left.jpg",
+    "note":  "Primary false-negative test case. Fake Cocoa Pups label on front; genuine Coco Pops NAFDAC number on back. Should trigger IDENTITY_MISMATCH override."
+  },
+  {
+    "name": "Kelloggs Coco Pops mirrored layout (subtle fake — monkey on wrong side)",
+    "front": "Kelloggs_coco_pops_360g_front_fake.jpg",
+    "back":  "Kelloggs_cocoa_pups_360g_left.jpg",
+    "note":  "Subtle counterfeit: packaging mimics genuine Coco Pops but the monkey mascot is on the wrong side of the box. Uses genuine Coco Pops NAFDAC number on the back."
+  },
+  {
+    "name": "Baseline BleuSeal counterfeit (Vaseline Blue Seal clone)",
+    "front": "baseline_bleuseal_front.JPG",
+    "back":  "baseline_bleuseal_back.jpg",
+    "note":  "Counterfeit product with altered brand name. Should return FAKE or SUSPICIOUS."
+  }
+]
