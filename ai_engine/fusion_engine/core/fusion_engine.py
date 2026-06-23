@@ -73,6 +73,13 @@ logger = logging.getLogger(__name__)
 # "COCO POPS" vs "Coco Pops" resolves via exact/substring check first (→ MATCH).
 NAME_MATCH_THRESHOLD = 0.85
 
+# Minimum similarity for an OCR block to be treated as a product-name candidate.
+# Blocks scoring below this against the registered name are unrelated label text
+# (e.g. "LAIT CORPS" vs "VASELINE EVENTONE B3 LOTION" ≈ 0.10) and must not
+# trigger IDENTITY_MISMATCH.  Genuine near-miss counterfeits ("Kellogg's Cocoa Pups"
+# vs "Kellogg's Coco Pops" ≈ 0.82) always score well above this floor.
+_MIN_NAME_RELATEDNESS = 0.30
+
 from ai_engine.fusion_engine.config.weights import (
     SIGNAL_WEIGHTS,
     SIGNAL_WEIGHTS_DAMAGED,
@@ -579,11 +586,17 @@ def _check_name_identity(
             "candidate_norm":  ocr_res["candidate_norm"],
         }
         if not ocr_res["is_match"]:
-            mismatch_parts.append(
-                f"OCR label name '{ocr_product_name}' "
-                f"(similarity={ocr_res['similarity']:.2f}) does not match "
-                f"registered name '{registered_name}'"
-            )
+            if ocr_res["similarity"] >= _MIN_NAME_RELATEDNESS:
+                # Related-but-distinct names (e.g. "Cocoa Pups" vs "Coco Pops" ≈ 0.82)
+                # are genuine counterfeit signals.
+                mismatch_parts.append(
+                    f"OCR label name '{ocr_product_name}' "
+                    f"(similarity={ocr_res['similarity']:.2f}) does not match "
+                    f"registered name '{registered_name}'"
+                )
+            # else: similarity below relatedness floor — the extracted block is
+            # unrelated label text (tagline, language variant, category label)
+            # and should not trigger IDENTITY_MISMATCH.
 
     # Check (b): visual-matched product vs OCR product name on the label.
     # If the image LOOKS LIKE product X but the label text says Y (and X≠Y) that is
