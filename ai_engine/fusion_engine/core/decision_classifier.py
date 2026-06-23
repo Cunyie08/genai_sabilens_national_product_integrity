@@ -173,7 +173,7 @@ def classify(fusion_result: dict) -> dict:
     ocr_score    = breakdown.get("ocr",    {}).get("raw_score", 0.0)
 
     if reg_status == "NOT_FOUND" and verdict in ("FAKE", "SUSPICIOUS"):
-        if visual_score < 0.60:
+        if visual_score < 0.60 and ocr_score < 0.60:
             # Both signals weak + not in DB = genuinely unknown
             verdict = "NOT_VERIFIED"
         elif verdict == "FAKE":

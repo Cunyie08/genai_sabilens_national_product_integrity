@@ -102,7 +102,7 @@ pip install -r requirements.txt
 ### 2. Configure Database
 Edit `.env`:
 ```env
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5433/sabilens_db
+DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/sabilens_db
 REDIS_URL=redis://localhost:6379
 SECRET_KEY=your-secret-key
 ```

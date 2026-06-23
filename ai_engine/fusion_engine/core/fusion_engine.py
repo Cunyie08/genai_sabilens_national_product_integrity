@@ -176,12 +176,6 @@ def run_fusion(visual_signal: dict, ocr_signal: dict, reg_signal: dict) -> dict:
             "reason": reg_signal.get("override_reason"),
         }
 
-    # Priority 2a - Visual strong fake signal (penalty < 0.5) -> force FAKE
-    elif visual_signal.get("override_flag") and visual_signal.get("penalty_applied", 1.0) < 0.5:
-        forced_verdict   = "FAKE"
-        forced_score     = 0.10
-        applied_override = {"source": "VISUAL", "type": "HARD_FAKE", "reason": visual_signal.get("override_reason")}
-
     # Priority 2 - Visual logo too low OR OCR no NAFDAC -> floor SUSPICIOUS
     # Only fires if score would have been AUTHENTIC - avoids suppressing a FAKE verdict
     elif visual_signal.get("override_flag") or ocr_signal.get("override_flag"):
@@ -205,12 +199,6 @@ def run_fusion(visual_signal: dict, ocr_signal: dict, reg_signal: dict) -> dict:
         verdict     = forced_verdict
     else:
         final_score = _compute_weighted(visual_score, ocr_score, reg_score, weights)
-        # Visual confidence veto (v2):
-        # If Visual flagged Fake (confidence < 0.50), OCR+REG cannot rescue to AUTHENTIC.
-        # EXEMPT: DAMAGED mode — blur reduces visual confidence legitimately.
-        visual_confidence = float(visual_signal.get("raw_confidence", visual_score))
-        if visual_confidence < 0.50 and final_score >= 0.72 and weight_mode != "DAMAGED":
-            final_score = 0.71
         verdict     = get_verdict(final_score)
 
     severity         = get_severity(verdict)
@@ -226,12 +214,6 @@ def run_fusion(visual_signal: dict, ocr_signal: dict, reg_signal: dict) -> dict:
             "damage_score":    damage_score,
             "blur_value":      blur_value,
             "weight_mode":     weight_mode,
-            # v2 forensic signals
-            "margin":          visual_signal.get("margin",          0.0),
-            "anomaly_flag":    visual_signal.get("anomaly_flag",    False),
-            "ambiguity_flag":  visual_signal.get("ambiguity_flag",  False),
-            "penalty_applied": visual_signal.get("penalty_applied", 1.0),
-            "visual_flags":    visual_signal.get("visual_flags",    []),
         },
         "ocr": {
             "raw_score":             ocr_score,
@@ -307,9 +289,6 @@ def run_fusion(visual_signal: dict, ocr_signal: dict, reg_signal: dict) -> dict:
             "nafdac_registered_product": reg_signal.get("nafdac_registered_product"),
             "damage_score":              damage_score,
             "blur_value":                blur_value,
-            "visual_flags":              visual_signal.get("visual_flags", []),
-            "anomaly_flag":              visual_signal.get("anomaly_flag", False),
-            "ambiguity_flag":            visual_signal.get("ambiguity_flag", False),
             "weight_mode":               weight_mode,
             "missing_fields":            ocr_signal.get("missing_fields", []),
             "reg_status_code":            reg_signal.get("status_code"),
@@ -512,4 +491,3 @@ def _build_rescan_required(
 
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-
