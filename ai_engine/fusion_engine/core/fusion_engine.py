@@ -61,7 +61,17 @@ SCALABILITY NOTES:
   - Never import Visual/OCR/Regulatory modules here - this file receives adapted signals only.
 """
 
+import re
+import difflib
+import logging
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
+
+# Minimum character-similarity ratio for two product names to be considered the same.
+# "Coco Pops" vs "Cocoa Pups" scores ~0.82 (below → MISMATCH).
+# "COCO POPS" vs "Coco Pops" resolves via exact/substring check first (→ MATCH).
+NAME_MATCH_THRESHOLD = 0.85
 
 from ai_engine.fusion_engine.config.weights import (
     SIGNAL_WEIGHTS,
@@ -128,9 +138,11 @@ def run_fusion(visual_signal: dict, ocr_signal: dict, reg_signal: dict) -> dict:
     # Read scan quality and retrieval signals 
     damage_score   = float(visual_signal.get("damage_score",  0.1))
     blur_value     = float(visual_signal.get("blur_value",    60.0))
-    retrieval_path = reg_signal.get("retrieval_path",      "nafdac_exact")
-    fallback_used  = bool(reg_signal.get("fallback_used",  False))
-    nafdac_number  = ocr_signal.get("nafdac_number")
+    retrieval_path         = reg_signal.get("retrieval_path",      "nafdac_exact")
+    fallback_used          = bool(reg_signal.get("fallback_used",  False))
+    nafdac_number          = ocr_signal.get("nafdac_number")
+    ocr_product_name       = ocr_signal.get("product_name")
+    visual_product_matched = visual_signal.get("product_matched")
 
     #  Extreme blur check - reject before fusion 
     # Never return FAKE for a bad photo. Reject the scan and save for retraining.
@@ -142,13 +154,20 @@ def run_fusion(visual_signal: dict, ocr_signal: dict, reg_signal: dict) -> dict:
             ocr_signal    = ocr_signal,
         )
 
-    # Select weight set 
+    # Select weight set
     weights, weight_mode = _resolve_weights(
         damage_score  = damage_score,
         fallback_used = fallback_used,
     )
 
-    # Collect all override flags 
+    # Name/identity cross-validation — detects real NAFDAC number on fake packaging
+    name_id_check = _check_name_identity(
+        reg_signal             = reg_signal,
+        ocr_product_name       = ocr_product_name,
+        visual_product_matched = visual_product_matched,
+    )
+
+    # Collect all override flags
     overrides_triggered = []
     for signal, label in [
         (visual_signal, "VISUAL"),
@@ -161,13 +180,29 @@ def run_fusion(visual_signal: dict, ocr_signal: dict, reg_signal: dict) -> dict:
                 "reason": signal.get("override_reason", "Unknown override"),
             })
 
-    # Evaluate override hierarchy 
+    # Evaluate override hierarchy
     forced_verdict   = None
     forced_score     = None
     applied_override = None
 
+    # Priority 0 - Identity mismatch: NAFDAC verified but product name does not match.
+    # Real NAFDAC number on mismatched packaging is the primary counterfeit vector.
+    # This fires BEFORE the reg override so it is never masked by an EXPIRED/AGENT_ERROR.
+    if name_id_check["mismatch_detected"]:
+        forced_verdict   = "FAKE"
+        forced_score     = 0.0
+        applied_override = {
+            "source": "NAME_MISMATCH",
+            "type":   "IDENTITY_MISMATCH",
+            "reason": name_id_check["reason"],
+        }
+        overrides_triggered.insert(0, {
+            "source": "NAME_MISMATCH",
+            "reason": name_id_check["reason"],
+        })
+
     # Priority 1 - Regulatory CRITICAL -> force FAKE
-    if reg_signal.get("override_flag"):
+    elif reg_signal.get("override_flag"):
         forced_verdict   = "FAKE"
         forced_score     = 0.0
         applied_override = {
@@ -282,11 +317,13 @@ def run_fusion(visual_signal: dict, ocr_signal: dict, reg_signal: dict) -> dict:
         #  Evidence fields (forwarded to decision_classifier -> evidence_packager) 
         "evidence": {
             "nafdac_number":             nafdac_number,
+            "ocr_product_name":          ocr_product_name,
             "brand_detected":            ocr_signal.get("brand_detected"),
             "brand_anomaly_flag":        ocr_signal.get("brand_anomaly_flag"),
             "lookalike_corrections":     ocr_signal.get("lookalike_corrections", []),
             "product_matched_visual":    visual_signal.get("product_matched"),
             "nafdac_registered_product": reg_signal.get("nafdac_registered_product"),
+            "name_identity_check":       name_id_check,
             "damage_score":              damage_score,
             "blur_value":                blur_value,
             "weight_mode":               weight_mode,
@@ -433,6 +470,172 @@ def _save_reason(damage_score: float, blur_value: float) -> str | None:
     if damage_score >= DAMAGED_SCORE_FLOOR:
         return "LOW_SCAN_QUALITY_MODERATE"
     return None
+
+
+def _normalize_name(name: str) -> str:
+    """Lowercase, strip punctuation, collapse whitespace."""
+    name = name.lower()
+    name = re.sub(r"[^a-z0-9\s]", "", name)
+    return re.sub(r"\s+", " ", name).strip()
+
+
+def _name_match(registered: str, candidate: str) -> dict:
+    """
+    Fuzzy product-name comparison. Returns {is_match, similarity, method, ...}.
+
+    Three-stage check (in priority order):
+      1. Exact match after normalization          — handles case/punctuation noise
+      2. Substring containment (no-space forms)  — handles "CloseUp" vs "Close Up Toothpaste"
+                                                   and "Coco Pops" vs "KELLOGG'S COCO POPS"
+      3. SequenceMatcher ratio on no-space forms — handles minor OCR character noise
+         "Cocoa Pups" vs "Coco Pops" scores ~0.82 → below NAME_MATCH_THRESHOLD (0.85) → MISMATCH
+    """
+    reg_norm  = _normalize_name(registered)
+    cand_norm = _normalize_name(candidate)
+
+    if reg_norm == cand_norm:
+        return {"is_match": True, "similarity": 1.0, "method": "exact",
+                "registered_norm": reg_norm, "candidate_norm": cand_norm}
+
+    reg_ns  = reg_norm.replace(" ", "")
+    cand_ns = cand_norm.replace(" ", "")
+    if cand_ns in reg_ns or reg_ns in cand_ns:
+        return {"is_match": True, "similarity": 0.95, "method": "substring",
+                "registered_norm": reg_norm, "candidate_norm": cand_norm}
+
+    char_sim = round(difflib.SequenceMatcher(None, reg_ns, cand_ns).ratio(), 4)
+    return {
+        "is_match":        char_sim >= NAME_MATCH_THRESHOLD,
+        "similarity":      char_sim,
+        "method":          "char_similarity",
+        "registered_norm": reg_norm,
+        "candidate_norm":  cand_norm,
+    }
+
+
+def _check_name_identity(
+    reg_signal:             dict,
+    ocr_product_name:       "str | None",
+    visual_product_matched: "str | None",
+) -> dict:
+    """
+    Cross-validate product identity when the NAFDAC number is VERIFIED.
+
+    Catches the primary counterfeit vector: a genuine NAFDAC number affixed to
+    packaging that carries a different product name (e.g. "Cocoa Pups" on a
+    package using the NAFDAC number registered to "Coco Pops").
+
+    Checks performed (each only when the relevant name is available):
+      (a) Registered name  vs  OCR-extracted product name from the label
+      (b) Visual-matched product name  vs  OCR-extracted product name
+          (image LOOKS LIKE X but label text says Y → strong counterfeit signal)
+
+    Returns a result dict that is forwarded into evidence and the override hierarchy.
+    Logs the comparison at WARNING level when a mismatch is detected.
+    """
+    result: dict = {
+        "mismatch_detected": False,
+        "registered_name":   None,
+        "ocr_check":         None,
+        "visual_check":      None,
+        "reason":            None,
+    }
+
+    status_code = reg_signal.get("status_code", "")
+    if status_code not in ("VERIFIED", "VERIFIED_NEAR_EXPIRY"):
+        return result
+
+    registered_name = reg_signal.get("nafdac_registered_product")
+    if not registered_name:
+        return result
+
+    result["registered_name"] = registered_name
+
+    # Ignore visual sentinel values
+    if visual_product_matched in (None, "UNKNOWN", "NO_PRODUCT_DETECTED", ""):
+        visual_product_matched = None
+
+    if not ocr_product_name and not visual_product_matched:
+        return result
+
+    mismatch_parts = []
+
+    # Check (a): registered name vs OCR product name extracted from the label
+    if ocr_product_name:
+        ocr_res = _name_match(registered_name, ocr_product_name)
+        result["ocr_check"] = {
+            "performed":       True,
+            "is_match":        ocr_res["is_match"],
+            "similarity":      ocr_res["similarity"],
+            "method":          ocr_res["method"],
+            "registered_norm": ocr_res["registered_norm"],
+            "candidate_norm":  ocr_res["candidate_norm"],
+        }
+        if not ocr_res["is_match"]:
+            mismatch_parts.append(
+                f"OCR label name '{ocr_product_name}' "
+                f"(similarity={ocr_res['similarity']:.2f}) does not match "
+                f"registered name '{registered_name}'"
+            )
+
+    # Check (b): visual-matched product vs OCR product name on the label.
+    # If the image LOOKS LIKE product X but the label text says Y (and X≠Y) that is
+    # a direct counterfeit indicator even when check (a) could not be performed.
+    if visual_product_matched and ocr_product_name:
+        vis_res = _name_match(visual_product_matched, ocr_product_name)
+        result["visual_check"] = {
+            "performed":       True,
+            "is_match":        vis_res["is_match"],
+            "similarity":      vis_res["similarity"],
+            "method":          vis_res["method"],
+            "registered_norm": vis_res["registered_norm"],
+            "candidate_norm":  vis_res["candidate_norm"],
+        }
+        if not vis_res["is_match"]:
+            mismatch_parts.append(
+                f"Visual identity '{visual_product_matched}' "
+                f"(similarity={vis_res['similarity']:.2f}) does not match "
+                f"label text '{ocr_product_name}'"
+            )
+    elif visual_product_matched:
+        # OCR name unavailable — fall back to registered vs visual match
+        vis_res = _name_match(registered_name, visual_product_matched)
+        result["visual_check"] = {
+            "performed":       True,
+            "is_match":        vis_res["is_match"],
+            "similarity":      vis_res["similarity"],
+            "method":          vis_res["method"],
+            "registered_norm": vis_res["registered_norm"],
+            "candidate_norm":  vis_res["candidate_norm"],
+        }
+        if not vis_res["is_match"]:
+            mismatch_parts.append(
+                f"Visual identity '{visual_product_matched}' "
+                f"(similarity={vis_res['similarity']:.2f}) does not match "
+                f"registered name '{registered_name}'"
+            )
+
+    if mismatch_parts:
+        result["mismatch_detected"] = True
+        result["reason"] = (
+            f"NAFDAC number is registered for '{registered_name}' but "
+            + "; ".join(mismatch_parts) + ". "
+            "Real NAFDAC number on mismatched packaging is a confirmed counterfeit pattern."
+        )
+        logger.warning(
+            "NAME_IDENTITY_MISMATCH | nafdac_registered=%r | ocr_name=%r | "
+            "visual_matched=%r | %s",
+            registered_name, ocr_product_name, visual_product_matched,
+            "; ".join(mismatch_parts),
+        )
+    else:
+        logger.info(
+            "NAME_IDENTITY_CHECK passed | nafdac_registered=%r | ocr_name=%r | "
+            "visual_matched=%r",
+            registered_name, ocr_product_name, visual_product_matched,
+        )
+
+    return result
 
 
 def _build_rescan_required(

@@ -97,7 +97,7 @@ def adapt(ocr_output: dict) -> dict:
     avg_ocr_confidence    = float(metadata.get("avg_ocr_confidence",   0.0))
     damage_applied        = float(rule_score_obj.get("damage_score_applied", 0.0))
     rule_score            = float(rule_score_obj.get("rule_score",           1.0))
-
+    product_name          = metadata.get("product_name")
 
     # Override: NAFDAC number not found by OCR : floor to SUSPICIOUS minimum
     override_flag   = False
@@ -121,6 +121,7 @@ def adapt(ocr_output: dict) -> dict:
         "avg_ocr_confidence":     round(avg_ocr_confidence,4),
         "damage_already_applied": round(damage_applied,    4),
         "nafdac_number":           nafdac_number,
+        "product_name":            product_name,
         "brand_detected":          brand_detected,
         "brand_anomaly_flag":      brand_anomaly_flag,
         "brand_similarity":        round(brand_similarity, 4),

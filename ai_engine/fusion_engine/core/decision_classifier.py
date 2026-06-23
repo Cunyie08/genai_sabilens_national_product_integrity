@@ -131,6 +131,10 @@ _WARNING_APPENDAGES = {
         " Note: The NAFDAC number could not be matched exactly. "
         "A partial match was used. Verify independently if in doubt."
     ),
+    "NAME_IDENTITY_MISMATCH": (
+        " Warning: The NAFDAC number on this product belongs to a different product. "
+        "A genuine registration number on mismatched packaging is a known counterfeit technique."
+    ),
 }
 
 # Main classify function
@@ -186,8 +190,28 @@ def classify(fusion_result: dict) -> dict:
     instruction      = _build_instruction(verdict, fusion_result)
     simple_instruction = _SIMPLE_INSTRUCTIONS.get(verdict, _SIMPLE_INSTRUCTIONS["FAKE"])
 
-    # Context-aware simple_instruction override for known fake patterns
-    if verdict == "FAKE" and reg_status == "SUBCATEGORY_MISMATCH":
+    # Context-aware simple_instruction overrides for known fake patterns
+    if verdict == "FAKE" and (applied_override or {}).get("type") == "IDENTITY_MISMATCH":
+        name_id         = evidence.get("name_identity_check", {})
+        registered_name = (
+            name_id.get("registered_name") or
+            evidence.get("nafdac_registered_product") or
+            "the genuine product"
+        )
+        ocr_label = evidence.get("ocr_product_name") or ""
+        if ocr_label:
+            simple_instruction = (
+                f"The NAFDAC number on this product belongs to '{registered_name}', "
+                f"but the label says '{ocr_label}'. "
+                "This is a fake product. Do not buy it."
+            )
+        else:
+            simple_instruction = (
+                f"This product's NAFDAC number belongs to '{registered_name}', "
+                "but this is not that product. Do not buy it."
+            )
+
+    elif verdict == "FAKE" and reg_status == "SUBCATEGORY_MISMATCH":
         nafdac = evidence.get("nafdac_number", "") or ""
         registered_cat = (
             breakdown.get("reg", {}).get("nafdac_registered_category") or
@@ -266,6 +290,28 @@ def _build_instruction(verdict: str, fusion_result: dict) -> str:
     reg_status = evidence.get("reg_status_code", "") or ""
 
     if verdict == "FAKE":
+        applied_override_info = fusion_result.get("applied_override") or {}
+        if applied_override_info.get("type") == "IDENTITY_MISMATCH":
+            name_id         = evidence.get("name_identity_check", {})
+            registered_name = (
+                name_id.get("registered_name") or
+                evidence.get("nafdac_registered_product") or
+                "the genuine product"
+            )
+            ocr_label = evidence.get("ocr_product_name") or ""
+            nafdac    = evidence.get("nafdac_number", "") or ""
+            nafdac_str = f" ({nafdac})" if nafdac else ""
+            label_str  = f" '{ocr_label}'" if ocr_label else " a different product name"
+            base = (
+                f"WARNING: This product has FAILED verification. "
+                f"The NAFDAC number{nafdac_str} is registered for '{registered_name}', "
+                f"but the packaging on this product shows{label_str}. "
+                "A real NAFDAC number on mismatched packaging is a common counterfeit technique. "
+                "Do NOT purchase this product. "
+                "Your scan has been logged and reported to NAFDAC."
+            )
+            return base
+
         if reg_status == "SUBCATEGORY_MISMATCH":
             registered_cat = (
                 breakdown.get("reg", {}).get("nafdac_registered_category") or
